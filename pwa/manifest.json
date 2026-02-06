@@ -1,0 +1,8 @@
+{
+  "name": "Lotería TV",
+  "short_name": "LoteríaTV",
+  "start_url": "/index.html",
+  "display": "fullscreen",
+  "background_color": "#000000",
+  "theme_color": "#000000"
+}
