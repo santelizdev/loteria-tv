@@ -7,3 +7,4 @@ from .transmission import Transmission
 from .license import License  
 from .result_archive import ResultArchive
 from .animalito_result import AnimalitoResult
+from .animalito_archive import AnimalitoArchive

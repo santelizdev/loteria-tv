@@ -26,6 +26,7 @@ from django.utils import timezone
 from core.models import Provider, CurrentResult
 from core.services.device_redis_service import DeviceRedisService
 
+from core.models import CurrentResult, ResultArchive
 
 LOTOVEN_URL = "https://lotoven.com/loterias/"
 
@@ -190,8 +191,12 @@ class Command(BaseCommand):
         # -----------------------------
         with transaction.atomic():
             for provider, draw_time, number in upserts:
+                today = timezone.localdate()
+
+                draw_date = timezone.localdate()
                 CurrentResult.objects.update_or_create(
                     provider=provider,
+                    draw_date=draw_date,
                     draw_time=draw_time,
                     defaults={"winning_number": number, "image_url": ""},
                 )
@@ -199,17 +204,20 @@ class Command(BaseCommand):
         # -----------------------------
         # 6) Cache para lectura rápida
         # -----------------------------
+class Command(BaseCommand):
+    help = "Scrapea lotoven.com/loterias/ (tablas simples) y upsertea CurrentResult."
+
+    def handle(self, *args, **opts):
+        ...
         payload = self._build_cache_payload()
         DeviceRedisService.set_cache("results:current:all", payload, ttl_seconds=120)
-
-        self.stdout.write(self.style.SUCCESS(f"OK: upsert {len(upserts)} resultados."))
+        ...
 
     @staticmethod
     def _build_cache_payload():
         """
-        Payload serializable para Redis:
-        - No metemos objetos Django
-        - draw_time siempre HH:MM
+        Payload serializable para Redis, consistente con tu API/PWA:
+        [{provider, time, number, image}]
         """
         data = []
         qs = CurrentResult.objects.select_related("provider").order_by("provider__name", "draw_time")
@@ -217,8 +225,9 @@ class Command(BaseCommand):
             data.append(
                 {
                     "provider": r.provider.name,
-                    "draw_time": r.draw_time.strftime("%H:%M"),
-                    "winning_number": r.winning_number,
+                    "time": r.draw_time.strftime("%H:%M"),
+                    "number": r.winning_number,
+                    "image": r.image_url or "",
                 }
             )
         return data

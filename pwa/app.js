@@ -142,20 +142,27 @@ async function fetchAnimalitos() {
 
 
 function normalizeTriples(raw) {
-  // backend: [{provider, time:"08:05", number:"934"}, ...]
+  // backend puede venir como:
+  // [{provider, time, number}]  o  [{provider, draw_time, winning_number}]
   const out = [];
+
   for (const r of raw || []) {
-    const slot = timeToHourSlot(r.time);
+    const time = r.time ?? r.draw_time;                 // ✅ compat
+    const number = r.number ?? r.winning_number;        // ✅ compat
+
+    const slot = timeToHourSlot(time);
     if (!slot) continue;
 
     out.push({
       provider: r.provider,
       time: slot,
-      number: String(r.number ?? "").trim(),
+      number: String(number ?? "").trim(),
     });
   }
+
   return out;
 }
+
 function normalizeAnimalitos(raw) {
   const out = [];
 
@@ -167,7 +174,7 @@ function normalizeAnimalitos(raw) {
       provider: r.provider,
       time: slot,
       number: String(r.number ?? "").padStart(2, "0"),
-      animal: r.name ?? "",
+      animal: (r.animal ?? r.name ?? "").trim(),
       image: r.image ?? "",
     });
   }
@@ -194,10 +201,14 @@ function rowsForProviderTriples(rows, provider) {
 }
 
 function rowsForProviderAnimalitos(rows, provider) {
-  const map = new Map(); // slot -> {number, animal, image}
+  const map = new Map();
   for (const r of rows) {
     if (r.provider !== provider) continue;
-    map.set(r.time, { number: r.number, animal: r.animal, image: r.image });
+    map.set(r.time, {
+      number: r.number,
+      animal: r.animal,   // 🔥 este es el que renderizas
+      image: r.image,
+    });
   }
   return map;
 }
@@ -232,20 +243,22 @@ function renderProviderColumnAnimalitos(providerName, rowsMap) {
   const body = SLOTS.map((t) => {
     const item = rowsMap.get(t);
 
+    // ✅ slot vacío
     if (!item) {
-    return `
-    <div class="col__row col__row--animal">
-        <div class="col__time">${esc(t)}</div>
-        <div class="col__num col__num--animal">${esc(item.number)}</div>
-        <div class="col__nameWrap">
-        <div class="col__name">${esc(item.animal)}</div>
-        ${img}
+      return `
+        <div class="col__row col__row--animal">
+          <div class="col__time">${esc(t)}</div>
+          <div class="col__num col__num--animal"><span class="col__empty">…</span></div>
+          <div class="col__nameWrap">
+            <div class="col__name"><span class="col__empty">…</span></div>
+          </div>
         </div>
-    </div>
-    `;
-
+      `;
     }
 
+    // ✅ slot con data (blindado)
+    const num = item.number ?? "";
+    const animal = item.animal ?? "";
     const img = item.image
       ? `<img class="col__icon" src="${esc(item.image)}" alt="" loading="lazy" />`
       : "";
@@ -253,9 +266,9 @@ function renderProviderColumnAnimalitos(providerName, rowsMap) {
     return `
       <div class="col__row col__row--animal">
         <div class="col__time">${esc(t)}</div>
-        <div class="col__num col__num--animal">${esc(item.number)}</div>
+        <div class="col__num col__num--animal">${esc(num)}</div>
         <div class="col__nameWrap">
-          <div class="col__name">${esc(item.name)}</div>
+          <div class="col__name">${esc(animal)}</div>
           ${img}
         </div>
       </div>
@@ -271,6 +284,7 @@ function renderProviderColumnAnimalitos(providerName, rowsMap) {
     </article>
   `;
 }
+
 
 function renderCurrentPage() {
   const isTriples = state.view === "triples";
@@ -354,15 +368,19 @@ function startPager() {
  */
 function startClock() {
   if (!vzClock) return;
+
   const upd = () => {
     const d = new Date();
     const hh = String(d.getHours()).padStart(2, "0");
     const mm = String(d.getMinutes()).padStart(2, "0");
-    vzClock.textContent = `${hh}:${mm}`;
+    const ss = String(d.getSeconds()).padStart(2, "0");
+    vzClock.textContent = `${hh}:${mm}:${ss}`;
   };
+
   upd();
-  setInterval(upd, 10_000);
+  setInterval(upd, 1000);
 }
+
 
 /**
  * ===========================
@@ -385,16 +403,17 @@ window.addEventListener("deviceActivated", async () => {
 // Triples vienen por DeviceManager (polling /api/results/)
 window.addEventListener("resultsUpdated", (e) => {
   const raw = Array.isArray(e.detail) ? e.detail : [];
+  console.log("Triples payload sample:", raw[0]);
 
   state.triples.rows = normalizeTriples(raw);
   state.triples.providers = computeProviders(state.triples.rows);
 
-  // si todavía no hay pager, arrancar UI
+  console.log("Triples rows:", state.triples.rows.length);
+  console.log("Triples providers:", state.triples.providers.length);
+
   if (!state.triples.providers.length) return;
 
-  // si estás en triples, refresca el render
   if (state.view === "triples") renderCurrentPage();
-
   startPager();
 });
 
@@ -405,18 +424,26 @@ window.addEventListener("resultsUpdated", (e) => {
  */
 (async () => {
   startClock();
-
-  // default view triples
   setActiveView("triples");
 
-  // register / show code / connect WS
+  // Register si no hay activation code
   if (!deviceManager.activationCode) {
     await deviceManager.register();
   }
+
+  // WS
   deviceManager.connectSocket();
 
-  // status fallback
+  // Status fallback
   try {
     await deviceManager.syncStatusOnce();
   } catch (_) {}
+
+  // ✅ Render inmediato (sin depender del WS)
+  await deviceManager.fetchResultsOnce();
+  await fetchAnimalitos();
+
+  // ✅ Arranca refresh periódico animalitos aunque no llegue deviceActivated
+  setInterval(fetchAnimalitos, ANIMALITOS_REFRESH_MS);
 })();
+

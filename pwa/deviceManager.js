@@ -36,23 +36,12 @@ class DeviceManager {
     this.resultsInterval = null;
     this.heartbeatInterval = null;
 
-    // WebSocket
-    this.socket = null;
-    this.socketRetryTimeout = null;
+    // WebSocket (UNA sola fuente de verdad)
+    this.ws = null;
+    this.wsRetryAttempt = 0;
+    this.wsRetryTimer = null;
   }
-  retrySocket() {
-  if (this.socketRetryTimeout) return;
 
-  this.socketRetryTimeout = setTimeout(() => {
-    this.socketRetryTimeout = null;
-    this.connectSocket();
-  }, 2000);
-  this.socket.onclose = () => {
-  console.warn("WebSocket desconectado, reintentando...");
-  this.retrySocket();
-};
-
-}
 
 
   /* -----------------------------
@@ -78,33 +67,84 @@ class DeviceManager {
     return data;
   }
 
-  /* -----------------------------
-     WEBSOCKET CON RECONEXIÓN
-  ------------------------------*/
- connectSocket() {
+/* -----------------------------
+   WEBSOCKET CON BACKOFF LIMPIO
+------------------------------*/
+connectSocket() {
   if (!this.activationCode) return;
 
-  const wsUrl = `${wsBaseUrl()}/ws/device/${this.activationCode}/`;
-  this.socket = new WebSocket(wsUrl);
+  // evita dobles conexiones
+  if (
+    this.ws &&
+    (this.ws.readyState === WebSocket.OPEN ||
+     this.ws.readyState === WebSocket.CONNECTING)
+  ) {
+    return;
+  }
 
-  this.socket.onopen = () => {
-    console.log("WebSocket conectado:", wsUrl);
+  // limpia retry pendiente
+  if (this.wsRetryTimer) {
+    clearTimeout(this.wsRetryTimer);
+    this.wsRetryTimer = null;
+  }
+
+  const url = `${wsBaseUrl()}/ws/device/${encodeURIComponent(this.activationCode)}/`;
+  this.ws = new WebSocket(url);
+
+  this.ws.onopen = () => {
+    console.log("WebSocket conectado:", url);
+    this.wsRetryAttempt = 0;
   };
 
-  this.socket.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    console.log("WS msg:", data);
-    this.handleSocketMessage(data);
-  };
+  this.ws.onmessage = (ev) => {
+  try {
+    const msg = JSON.parse(ev.data);
+    console.log("WS msg:", msg);
 
-  this.socket.onclose = () => {
+    // ✅ ESTA LÍNEA ES LA CLAVE
+    this.handleSocketMessage(msg);
+
+  } catch (e) {
+    console.warn("WS parse error:", e);
+  }
+};
+
+  this.ws.onclose = () => {
     console.warn("WebSocket desconectado, reintentando...");
-    this.retrySocket();
+    this.scheduleReconnect();
   };
 
-  this.socket.onerror = () => {
-    try { this.socket.close(); } catch (_) {}
+  this.ws.onerror = () => {
+    // no reconectar aquí
   };
+}
+
+scheduleReconnect() {
+  const attempt = (this.wsRetryAttempt || 0) + 1;
+  this.wsRetryAttempt = attempt;
+
+  const delay = Math.min(15000, 1000 * Math.pow(2, attempt - 1));
+
+  this.wsRetryTimer = setTimeout(() => {
+    this.wsRetryTimer = null;
+    this.connectSocket();
+  }, delay);
+}
+
+
+scheduleReconnect() {
+  // backoff simple: 1s, 2s, 4s, 8s... max 15s
+  const attempt = (this.wsRetryAttempt || 0) + 1;
+  this.wsRetryAttempt = attempt;
+
+  const delay = Math.min(15000, 1000 * Math.pow(2, attempt - 1));
+
+  if (this.wsRetryTimer) clearTimeout(this.wsRetryTimer);
+
+  this.wsRetryTimer = setTimeout(() => {
+    this.wsRetryTimer = null;
+    this.connectSocket();
+  }, delay);
 }
 
 

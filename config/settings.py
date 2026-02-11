@@ -1,11 +1,17 @@
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+from celery.schedules import crontab
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-insecure-key")
 DEBUG = os.getenv("DJANGO_DEBUG", "1") == "1"
-ALLOWED_HOSTS = []
+
+ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",") if not DEBUG else ["*"]
+
+REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/1")
 
 # -------------------------
 # APPS
@@ -72,7 +78,7 @@ DATABASES = {
         "NAME": BASE_DIR / "db.sqlite3",
     }
 }
-
+DATABASES["default"]["OPTIONS"] = {"timeout": 20}
 # -------------------------
 # STATIC FILES  (CLAVE)
 # -------------------------
@@ -109,7 +115,7 @@ CORS_ALLOW_ALL_ORIGINS = True
 # I18N
 # -------------------------
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = "UTC"
+TIME_ZONE = os.getenv("DJANGO_TIME_ZONE", "America/Caracas")
 USE_I18N = True
 USE_TZ = True
 
@@ -120,10 +126,31 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # -------------------------
 CACHES = {
     "default": {
-        "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": "redis://127.0.0.1:6379/1",
+    "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": REDIS_URL,
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
         },
     }
+}
+CELERY_TIMEZONE = os.getenv("CELERY_TIMEZONE", TIME_ZONE)
+CELERY_ENABLE_UTC = os.getenv("CELERY_ENABLE_UTC", "0") == "1"
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/2")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://127.0.0.1:6379/3")
+
+
+
+CELERY_BEAT_SCHEDULE = {
+    "scrape_triples_hourly": {
+        "task": "core.tasks.scrape_triples",
+        "schedule": crontab(minute=2, hour="8-22"),
+    },
+    "scrape_animalitos_hourly": {
+        "task": "core.tasks.scrape_animalitos",
+        "schedule": crontab(minute=5, hour="8-22"),
+    },
+    "archive_daily": {
+        "task": "core.tasks.archive_daily",
+        "schedule": crontab(minute=10, hour=0),  # 00:10 Venezuela
+    },
 }

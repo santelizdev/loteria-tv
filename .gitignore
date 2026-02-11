@@ -1,19 +1,8 @@
-# Python
-venv/
+.env
+*.sqlite3
 __pycache__/
 *.pyc
-.env
-.env.*
-*.sqlite3
-
-# Django
 staticfiles/
-media/
-*.log
-
-# Node/PWA
-node_modules/
-dist/
-
-# OS
+.venv/
+venv/
 .DS_Store

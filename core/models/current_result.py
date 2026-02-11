@@ -3,7 +3,7 @@ from django.utils import timezone
 from .provider import Provider
 
 class CurrentResult(models.Model):
-    provider = models.ForeignKey(Provider, on_delete=models.CASCADE, related_name="results")
+    provider = models.ForeignKey(Provider, on_delete=models.CASCADE, related_name="current_results")
 
     draw_date = models.DateField(default=timezone.localdate)  # ✅ nuevo
     draw_time = models.TimeField()
@@ -16,7 +16,7 @@ class CurrentResult(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["provider", "draw_date", "draw_time"],  # ✅ incluye draw_date
-                name="uniq_provider_draw_date_time"
+                name="uniq_current_provider_draw_date_time"
             ),
         ]
 

@@ -1,18 +1,24 @@
-#endpoint autoregistro
+# core/api/views.py
+
 import random
 import string
+from datetime import datetime
+
+from django.db.models import Max
+from django.utils import timezone
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from core.models import Device
-from core.models.animalito_result import AnimalitoResult
-from datetime import datetime
-from django.utils import timezone
-from core.models import CurrentResult
+
+from core.models import (
+    Device,
+    CurrentResult,
+    AnimalitoResult,
+)
 from core.services.device_service import DeviceService
 from core.services.device_redis_service import DeviceRedisService
-from django.db.models import Max
+
 
 
 #views
@@ -188,32 +194,46 @@ class AnimalitosResultsAPIView(APIView):
     authentication_classes = []
     permission_classes = []
 
+    CACHE_TTL = 120  # segundos
+
     def get(self, request):
         activation_code = request.query_params.get("code")
         ip_address = request.META.get("REMOTE_ADDR")
 
-        DeviceService.validate_device(
-            activation_code=activation_code,
-            ip_address=ip_address,
-        )
+        # 1️⃣ VALIDAR DEVICE (siempre primero)
+        try:
+            DeviceService.validate_device(
+                activation_code=activation_code,
+                ip_address=ip_address,
+            )
+        except PermissionError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN)
 
+        # 2️⃣ Fecha objetivo
         raw_date = request.query_params.get("date")
-
         if raw_date:
             try:
                 target_date = datetime.strptime(raw_date, "%Y-%m-%d").date()
             except ValueError:
-                return Response({"detail": "Invalid date format. Use YYYY-MM-DD"}, status=400)
+                return Response(
+                    {"detail": "Invalid date format. Use YYYY-MM-DD"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
         else:
-            # Si hoy no hay data, usa el último draw_date disponible
             today = timezone.localdate()
             last = AnimalitoResult.objects.aggregate(last=Max("draw_date"))["last"]
             target_date = today if AnimalitoResult.objects.filter(draw_date=today).exists() else last
 
         if not target_date:
-            return Response([], status=200)
+            return Response([], status=status.HTTP_200_OK)
 
+        # 3️⃣ Cache
+        cache_key = f"results:animalitos:{target_date.isoformat()}"
+        cached = DeviceRedisService.get_cache(cache_key)
+        if cached:
+            return Response(cached, status=status.HTTP_200_OK)
 
+        # 4️⃣ Query DB
         qs = (
             AnimalitoResult.objects
             .select_related("provider")
@@ -226,11 +246,18 @@ class AnimalitosResultsAPIView(APIView):
                 "provider": r.provider.name,
                 "time": r.draw_time.strftime("%H:%M"),
                 "number": str(r.animal_number).zfill(2),
-                "name": r.animal_name,
+                "animal": r.animal_name,
                 "image": r.animal_image_url,
             }
             for r in qs
         ]
 
-        return Response(data, status=200)
+        # 5️⃣ Guardar cache
+        DeviceRedisService.set_cache(
+            cache_key,
+            data,
+            ttl_seconds=self.CACHE_TTL,
+        )
+
+        return Response(data, status=status.HTTP_200_OK)
 
