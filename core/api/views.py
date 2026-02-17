@@ -228,7 +228,8 @@ class AnimalitosResultsAPIView(APIView):
             return Response([], status=status.HTTP_200_OK)
 
         # 3️⃣ Cache
-        cache_key = f"results:animalitos:{target_date.isoformat()}"
+        CACHE_VERSION = "v2"  # sube a v3, v4… cuando cambie el payload
+        cache_key = f"results:animalitos:{CACHE_VERSION}:{target_date.isoformat()}"
         cached = DeviceRedisService.get_cache(cache_key)
         if cached:
             return Response(cached, status=status.HTTP_200_OK)
