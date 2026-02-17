@@ -18,3 +18,7 @@ pwa_backup_*/
 # OS / editor
 .DS_Store
 .vscode/
+
+# Local dev artifacts
+logs_*.html
+*.code-workspace
