@@ -1,0 +1,234 @@
+:root{
+  --bg: #081a2a;
+  --panel: rgba(255,255,255,0.06);
+  --line: rgba(255,255,255,0.14);
+  --text: rgba(255,255,255,0.92);
+  --muted: rgba(255,255,255,0.72);
+  --accent: #2fd36b;
+}
+
+html, body{
+  height:100%;
+  margin:0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+
+.app{
+  height:100%;
+  display:flex;
+  flex-direction:column;
+}
+
+.header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding: 12px 16px;
+  background: rgba(0,0,0,0.25);
+  border-bottom: 1px solid rgba(255,255,255,0.10);
+}
+
+.brand__title{
+  font-weight: 900;
+  letter-spacing: .4px;
+}
+
+.live{
+  display:inline-flex;
+  align-items:center;
+  gap: 8px;
+  font-weight: 900;
+}
+
+.live__dot{
+  width:10px;
+  height:10px;
+  border-radius:999px;
+  background: var(--accent);
+}
+
+.clock{
+  font-weight: 900;
+}
+
+.content{
+  flex: 1;
+  padding: 14px 16px;
+}
+
+.footer{
+  padding: 10px 16px;
+  border-top: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.18);
+}
+
+.progress{
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.10);
+  overflow:hidden;
+}
+
+.progress__bar{
+  height:100%;
+  width:0%;
+  background: var(--accent);
+}
+
+/* 4 columnas tipo TV */
+.grid.grid--4{
+  display:grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  align-items: stretch;
+  height: 100%;
+}
+
+.col{
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 10px;
+  overflow: hidden;
+  min-height: unset;       /* quita el 70vh */
+  height: 100%;}
+
+.col__head{
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.12);
+  font-weight: 900;
+  background: rgba(0,0,0,0.18);
+}
+
+
+.col__title{
+  font-size: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.col__body{
+  padding: 6px 10px;
+}
+
+.col__row{
+  display:grid;
+  grid-template-columns: 70px 1fr;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.col__time{
+  opacity: .85;
+}
+
+.col__num{
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: .5px;
+}
+
+.col__empty{
+  opacity: .35;
+}
+
+/* responsive */
+@media (max-width: 1200px){
+  .grid.grid--4{ grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 720px){
+  .grid.grid--4{ grid-template-columns: 1fr; }
+}
+/* =========================
+   View transitions (Triples <-> Animalitos)
+   ========================= */
+.view{
+  opacity: 0;
+  transform: translateX(18px);
+  transition: opacity 260ms ease, transform 260ms ease;
+  pointer-events: none;
+  will-change: opacity, transform;
+}
+
+.view--active{
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+/* =========================
+   Animalitos row layout
+   ========================= */
+.col__row--animal{
+  grid-template-columns: 70px 64px 1fr; /* hora | número | nombre */
+}
+
+.col__num--animal{
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.col__name{
+  opacity: .9;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* opcional: mini icono a la derecha del nombre */
+.col__nameWrap{
+  display:flex;
+  align-items:center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.col__icon{
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  object-fit: contain;
+  background: rgba(255,255,255,0.06);
+  flex: 0 0 auto;
+}
+.col__name{
+  font-size: 14px;
+  font-weight: 600;
+  opacity: .85;
+  margin-left: 8px;
+}
+/* Layout base: header + content + footer */
+.app{
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.content{
+  flex: 1;                 /* ocupa todo el alto sobrante */
+  display: flex;           /* para controlar la vista */
+  align-items: stretch;    /* estira vertical */
+  justify-content: flex-start;
+  padding: 12px;
+}
+
+/* Las vistas deben ocupar el alto disponible */
+.view{
+  flex: 1;
+  display: none;
+  align-items: stretch;
+  justify-content: flex-start;
+}
+
+.view--active{
+  display: flex;
+}
+
+/* El grid también debe estirar */
+.grid{
+  width: 100%;
+  align-self: stretch;
+}
