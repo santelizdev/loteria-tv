@@ -245,7 +245,7 @@ class AnimalitosResultsAPIView(APIView):
             {
                 "provider": r.provider.name,
                 "time": r.draw_time.strftime("%H:%M"),
-                "number": str(r.animal_number).zfill(2),
+                "number": str(r.animal_number),
                 "animal": r.animal_name,
                 "image": r.animal_image_url,
             }

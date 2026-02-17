@@ -22,7 +22,7 @@ class AnimalitoResult(models.Model):
     draw_time = models.TimeField()
 
     # Número del animalito (0..99). Guardamos como entero, ligero en sqlite.
-    animal_number = models.PositiveSmallIntegerField()
+    animal_number = models.CharField(max_length=2)
 
     # Nombre del animalito ("Ardilla", "Pavo Real", etc.)
     animal_name = models.CharField(max_length=50)

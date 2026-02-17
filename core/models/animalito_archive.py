@@ -6,7 +6,7 @@ class AnimalitoArchive(models.Model):
     provider = models.ForeignKey(Provider, on_delete=models.CASCADE, related_name="archived_animalitos")
     draw_date = models.DateField(default=timezone.localdate)
     draw_time = models.TimeField()
-    animal_number = models.PositiveSmallIntegerField()
+    animal_number = models.CharField(max_length=2)
     animal_name = models.CharField(max_length=50)
     animal_image_url = models.URLField()
     provider_logo_url = models.URLField(blank=True, default="")

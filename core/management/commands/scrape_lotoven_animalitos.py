@@ -40,6 +40,8 @@ from core.models import Provider
 from core.models.animalito_result import AnimalitoResult
 
 
+
+
 # -----------------------------------------------------------------------------
 # 1) NORMALIZACIÓN DE NOMBRES DE PROVIDER
 # -----------------------------------------------------------------------------
@@ -448,10 +450,11 @@ class Command(BaseCommand):
         raw_name = parts[1] if len(parts) > 1 else ""
 
         try:
-            num = int(raw_num)
+            num = str(raw_num).strip()
         except ValueError:
             m = re.match(r"^(\d+)", raw_num)
-            num = int(m.group(1)) if m else 0
+            num = m.group(1) if m else ""
+
 
         raw_name = re.sub(r"\s+", " ", raw_name.strip())
         return (num, raw_name)
