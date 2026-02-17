@@ -6,3 +6,15 @@ staticfiles/
 .venv/
 venv/
 .DS_Store
+
+# Local backups / logs
+logs/
+pwa_backup_*/
+*.bak
+
+# Experimental copies
+*_v2.py
+
+# OS / editor
+.DS_Store
+.vscode/
