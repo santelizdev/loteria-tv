@@ -1,92 +1,236 @@
-# core/api/views.py
+# =========================
+# FILE: core/api/views.py
+# =========================
+from __future__ import annotations
 
 import random
 import string
 from datetime import datetime
+from typing import Optional
 
 from django.db.models import Max
 from django.utils import timezone
-
-from rest_framework.views import APIView
-from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from core.models import (
-    Device,
-    CurrentResult,
+    AnimalitoArchive,
     AnimalitoResult,
+    CurrentResult,
+    Device,
+    ResultArchive,
 )
-from core.services.device_service import DeviceService
 from core.services.device_redis_service import DeviceRedisService
+from core.services.device_service import DeviceService
 
 
+def _format_time_12h(value) -> str:
+    return value.strftime("%I:%M %p")
 
-#views
+
+def _parse_date(value: Optional[str]):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        return "INVALID"
+
+
+def _resolve_target_date_for_triples():
+    """
+    Decide qué fecha devolver si NO mandan ?date=
+    Prioridad:
+      1) hoy si hay CurrentResult hoy
+      2) último draw_date en CurrentResult
+      3) último draw_date en ResultArchive
+      4) None
+    """
+    today = timezone.localdate()
+
+    if CurrentResult.objects.filter(draw_date=today).exists():
+        return today
+
+    last_current = CurrentResult.objects.aggregate(last=Max("draw_date"))["last"]
+    if last_current:
+        return last_current
+
+    last_archive = ResultArchive.objects.aggregate(last=Max("draw_date"))["last"]
+    return last_archive
+
+
+def _resolve_target_date_for_animalitos():
+    """
+    Decide qué fecha devolver si NO mandan ?date=
+    Prioridad:
+      1) hoy si hay AnimalitoResult hoy
+      2) último draw_date en AnimalitoResult
+      3) último draw_date en AnimalitoArchive
+      4) None
+    """
+    today = timezone.localdate()
+
+    if AnimalitoResult.objects.filter(draw_date=today).exists():
+        return today
+
+    last_current = AnimalitoResult.objects.aggregate(last=Max("draw_date"))["last"]
+    if last_current:
+        return last_current
+
+    last_archive = AnimalitoArchive.objects.aggregate(last=Max("draw_date"))["last"]
+    return last_archive
 
 
 class CurrentResultsAPIView(APIView):
     authentication_classes = []
     permission_classes = []
 
-    CACHE_KEY = "results:current:all"
-    CACHE_TTL = 120  # 2 min (la data cambia por hora, pero queremos absorber bursts de TVs)
+    CACHE_TTL = 120
 
     def get(self, request):
         activation_code = request.query_params.get("code")
         ip_address = request.META.get("REMOTE_ADDR")
 
         if not activation_code:
-            return Response(
-                {"detail": "Missing activation code"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "Missing activation code"}, status=status.HTTP_400_BAD_REQUEST)
 
+        # validar device
         try:
-            DeviceService.validate_device(
-                activation_code=activation_code,
-                ip_address=ip_address,
-            )
+            DeviceService.validate_device(activation_code=activation_code, ip_address=ip_address)
         except PermissionError as e:
-            return Response(
-                {"detail": str(e)},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+            return Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN)
 
-        # -----------------------------
-        # 1) Cache-first (Redis)
-        # -----------------------------
-        cached = DeviceRedisService.get_cache(self.CACHE_KEY)
+        raw_date = request.query_params.get("date")
+        parsed = _parse_date(raw_date)
+        if parsed == "INVALID":
+            return Response({"detail": "Invalid date format. Use YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
+
+        target_date = parsed or _resolve_target_date_for_triples()
+        if not target_date:
+            return Response([], status=status.HTTP_200_OK)
+
+        today = timezone.localdate()
+        use_archive = target_date < today and ResultArchive.objects.filter(draw_date=target_date).exists()
+
+        # cache key por fecha + origen
+        cache_version = "v2"
+        origin = "archive" if use_archive else "current"
+        cache_key = f"results:triples:{cache_version}:{origin}:{target_date.isoformat()}"
+
+        cached = DeviceRedisService.get_cache(cache_key)
         if cached:
             return Response(cached, status=status.HTTP_200_OK)
 
-        # -----------------------------
-        # 2) Fallback DB
-        # -----------------------------
-        results = (
-            CurrentResult.objects
-            .select_related("provider")
-            .filter(provider__is_active=True)
-            .order_by("provider__name", "draw_time")
-        )
+        if use_archive:
+            qs = (
+                ResultArchive.objects.select_related("provider")
+                .filter(draw_date=target_date, provider__is_active=True)
+                .order_by("provider__name", "draw_time")
+            )
+            data = [
+                {
+                    "provider": r.provider.name,
+                    "time": _format_time_12h(r.draw_time),
+                    "number": r.winning_number,
+                    "image": r.image_url or "",
+                }
+                for r in qs
+            ]
+        else:
+            qs = (
+                CurrentResult.objects.select_related("provider")
+                .filter(draw_date=target_date, provider__is_active=True)
+                .order_by("provider__name", "draw_time")
+            )
+            data = [
+                {
+                    "provider": r.provider.name,
+                    "time": _format_time_12h(r.draw_time),
+                    "number": r.winning_number,
+                    "image": r.image_url or "",
+                }
+                for r in qs
+            ]
 
-        data = [
-            {
-                "provider": r.provider.name,
-                "time": r.draw_time.strftime("%H:%M"),
-                "number": r.winning_number,
-                # Mantengo "image" para compatibilidad con tu frontend aunque esté vacío
-                "image": r.image_url or "",
-            }
-            for r in results
-        ]
-
-        # -----------------------------
-        # 3) Repoblar cache
-        # -----------------------------
-        DeviceRedisService.set_cache(self.CACHE_KEY, data, ttl_seconds=self.CACHE_TTL)
-
+        DeviceRedisService.set_cache(cache_key, data, ttl_seconds=self.CACHE_TTL)
         return Response(data, status=status.HTTP_200_OK)
 
+
+class AnimalitosResultsAPIView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    CACHE_TTL = 120
+
+    def get(self, request):
+        activation_code = request.query_params.get("code")
+        ip_address = request.META.get("REMOTE_ADDR")
+
+        if not activation_code:
+            return Response({"detail": "Missing activation code"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # validar device
+        try:
+            DeviceService.validate_device(activation_code=activation_code, ip_address=ip_address)
+        except PermissionError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN)
+
+        raw_date = request.query_params.get("date")
+        parsed = _parse_date(raw_date)
+        if parsed == "INVALID":
+            return Response({"detail": "Invalid date format. Use YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
+
+        target_date = parsed or _resolve_target_date_for_animalitos()
+        if not target_date:
+            return Response([], status=status.HTTP_200_OK)
+
+        today = timezone.localdate()
+        use_archive = target_date < today and AnimalitoArchive.objects.filter(draw_date=target_date).exists()
+
+        cache_version = "v3"
+        origin = "archive" if use_archive else "current"
+        cache_key = f"results:animalitos:{cache_version}:{origin}:{target_date.isoformat()}"
+
+        cached = DeviceRedisService.get_cache(cache_key)
+        if cached:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        if use_archive:
+            qs = (
+                AnimalitoArchive.objects.select_related("provider")
+                .filter(draw_date=target_date)
+                .order_by("provider__name", "draw_time")
+            )
+            data = [
+                {
+                    "provider": r.provider.name,
+                    "time": _format_time_12h(r.draw_time),
+                    "number": str(r.animal_number),
+                    "animal": r.animal_name,
+                    "image": r.animal_image_url,
+                }
+                for r in qs
+            ]
+        else:
+            qs = (
+                AnimalitoResult.objects.select_related("provider")
+                .filter(draw_date=target_date)
+                .order_by("provider__name", "draw_time")
+            )
+            data = [
+                {
+                    "provider": r.provider.name,
+                    "time": _format_time_12h(r.draw_time),
+                    "number": str(r.animal_number),
+                    "animal": r.animal_name,
+                    "image": r.animal_image_url,
+                }
+                for r in qs
+            ]
+
+        DeviceRedisService.set_cache(cache_key, data, ttl_seconds=self.CACHE_TTL)
+        return Response(data, status=status.HTTP_200_OK)
 
 
 class DeviceRegisterView(APIView):
@@ -95,12 +239,8 @@ class DeviceRegisterView(APIView):
 
     def post(self, request):
         device_id = request.data.get("device_id")
-
         if not device_id:
-            return Response(
-                {"error": "device_id is required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"error": "device_id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         activation_code = self._generate_code()
         ip = self._get_ip(request)
@@ -124,15 +264,13 @@ class DeviceRegisterView(APIView):
         )
 
     def _generate_code(self):
-        return "".join(
-            random.choices(string.ascii_uppercase + string.digits, k=6)
-        )
+        return "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
     def _get_ip(self, request):
         xff = request.META.get("HTTP_X_FORWARDED_FOR")
         return xff.split(",")[0] if xff else request.META.get("REMOTE_ADDR")
 
-#ENDPOINT HEARTBEAT
+
 class DeviceHeartbeatAPIView(APIView):
     authentication_classes = []
     permission_classes = []
@@ -143,32 +281,16 @@ class DeviceHeartbeatAPIView(APIView):
         ip_address = request.META.get("REMOTE_ADDR")
 
         if not device_id or not activation_code:
-            return Response(
-                {"detail": "Missing credentials"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "Missing credentials"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            device = DeviceService.validate_device(
-                activation_code=activation_code,
-                ip_address=ip_address,
-            )
+            DeviceService.validate_device(activation_code=activation_code, ip_address=ip_address)
         except PermissionError as e:
-            return Response(
-                {"detail": str(e)},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+            return Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN)
 
-        return Response(
-            {
-                "status": "ok",
-                "online": True,
-            },
-            status=status.HTTP_200_OK,
-        )
+        return Response({"status": "ok", "online": True}, status=status.HTTP_200_OK)
 
 
-#STATUS
 class DeviceStatusAPIView(APIView):
     authentication_classes = []
     permission_classes = []
@@ -178,87 +300,24 @@ class DeviceStatusAPIView(APIView):
         if not activation_code:
             return Response({"detail": "Missing activation code"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Busca por activation_code (DB)
         try:
-            device = Device.objects.select_related("branch").get(activation_code=activation_code)
+            device = Device.objects.select_related("branch__client").get(activation_code=activation_code)
         except Device.DoesNotExist:
             return Response({"detail": "Invalid activation code"}, status=status.HTTP_404_NOT_FOUND)
 
-        return Response({
-            "is_active": bool(device.is_active and device.branch_id),
-            "branch_id": device.branch_id,
-        }, status=status.HTTP_200_OK)
+        branch = device.branch
+        client = branch.client if branch and getattr(branch, "client_id", None) else None
 
-#RESULTADOS_ANIMALITOS
-class AnimalitosResultsAPIView(APIView):
-    authentication_classes = []
-    permission_classes = []
+        client_logo_url = ""
+        if client and getattr(client, "logo_url", None):
+            client_logo_url = client.logo_url or ""
 
-    CACHE_TTL = 120  # segundos
-
-    def get(self, request):
-        activation_code = request.query_params.get("code")
-        ip_address = request.META.get("REMOTE_ADDR")
-
-        # 1️⃣ VALIDAR DEVICE (siempre primero)
-        try:
-            DeviceService.validate_device(
-                activation_code=activation_code,
-                ip_address=ip_address,
-            )
-        except PermissionError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN)
-
-        # 2️⃣ Fecha objetivo
-        raw_date = request.query_params.get("date")
-        if raw_date:
-            try:
-                target_date = datetime.strptime(raw_date, "%Y-%m-%d").date()
-            except ValueError:
-                return Response(
-                    {"detail": "Invalid date format. Use YYYY-MM-DD"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-        else:
-            today = timezone.localdate()
-            last = AnimalitoResult.objects.aggregate(last=Max("draw_date"))["last"]
-            target_date = today if AnimalitoResult.objects.filter(draw_date=today).exists() else last
-
-        if not target_date:
-            return Response([], status=status.HTTP_200_OK)
-
-        # 3️⃣ Cache
-        CACHE_VERSION = "v2"  # sube a v3, v4… cuando cambie el payload
-        cache_key = f"results:animalitos:{CACHE_VERSION}:{target_date.isoformat()}"
-        cached = DeviceRedisService.get_cache(cache_key)
-        if cached:
-            return Response(cached, status=status.HTTP_200_OK)
-
-        # 4️⃣ Query DB
-        qs = (
-            AnimalitoResult.objects
-            .select_related("provider")
-            .filter(draw_date=target_date)
-            .order_by("provider__name", "draw_time")
-        )
-
-        data = [
+        return Response(
             {
-                "provider": r.provider.name,
-                "time": r.draw_time.strftime("%H:%M"),
-                "number": str(r.animal_number),
-                "animal": r.animal_name,
-                "image": r.animal_image_url,
-            }
-            for r in qs
-        ]
-
-        # 5️⃣ Guardar cache
-        DeviceRedisService.set_cache(
-            cache_key,
-            data,
-            ttl_seconds=self.CACHE_TTL,
+                "is_active": bool(device.is_active and device.branch_id),
+                "branch_id": device.branch_id,
+                "client_logo_url": client_logo_url,
+            },
+            status=status.HTTP_200_OK,
         )
-
-        return Response(data, status=status.HTTP_200_OK)
 

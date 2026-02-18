@@ -35,6 +35,8 @@ from django.utils import timezone
 
 from core.models import Provider
 from core.models.animalito_result import AnimalitoResult
+from core.services.device_redis_service import DeviceRedisService
+
 
 
 # -----------------------------------------------------------------------------
@@ -148,6 +150,8 @@ class Command(BaseCommand):
                 )
             )
             return
+        
+        DeviceRedisService.delete_pattern("results:animalitos:*")
 
         html = self._fetch_html(target_date=target_date, force=force)
         rows = self._parse_html(html, target_date=target_date, verbosity=verbosity)

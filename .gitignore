@@ -1,24 +1,30 @@
-.env
-*.sqlite3
+# =========================
+# FILE: .gitignore
+# =========================
 __pycache__/
 *.pyc
-staticfiles/
-.venv/
-venv/
-.DS_Store
-
-# Local backups / logs
+*.pyo
+*.pyd
+*.log
 logs/
-pwa_backup_*/
-*.bak
 
-# Experimental copies
-*_v2.py
+.env
+*.env
 
-# OS / editor
+venv/
+.venv/
+env/
+ENV/
+
+db.sqlite3
+media/
+staticfiles/
 .DS_Store
+__MACOSX/
+.idea/
 .vscode/
-
-# Local dev artifacts
-logs_*.html
-*.code-workspace
+.pytest_cache/
+.mypy_cache/
+dist/
+build/
+node_modules/

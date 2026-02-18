@@ -15,6 +15,13 @@ def main():
         raise
     execute_from_command_line(sys.argv)
 
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:
+    load_dotenv = None
+
+if load_dotenv:
+    load_dotenv()
 
 
 if __name__ == '__main__':
