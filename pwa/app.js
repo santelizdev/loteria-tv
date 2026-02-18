@@ -1,35 +1,45 @@
+// ============================================
+// File: pwa/app.js
+// Renders into: #grid, #resultsTitle, #vzClock, #progressBar
+// ============================================
+
 import DeviceManager from "./deviceManager.js";
 
-/**
- * ===========================
- * CONFIG
- * ===========================
- */
 const DEVICE_ID = "TV_TEST_001";
-const ROTATION_MS = 20_000;          // cada cuánto avanza página
-const ANIMALITOS_REFRESH_MS = 60_000; // cada cuánto refrescamos animalitos por HTTP
+
+// Rotación
+const ROTATION_MS = 20_000; // cambio de página/grupo
+const ANIMALITOS_REFRESH_MS = 60_000; // refrescar cache hoy
+const ANIMALITOS_INTERVAL_MS = 15_000; // alterna HOY/AYER
+
+// Slots 08:00-20:00
+const SLOTS = (() => {
+  const out = [];
+  for (let h = 8; h <= 20; h++) out.push(`${String(h).padStart(2, "0")}:00`);
+  return out;
+})();
 
 const deviceManager = new DeviceManager(DEVICE_ID);
 
-/**
- * ===========================
- * DOM
- * ===========================
- */
-const triplesGrid = document.getElementById("triplesGrid");
-const animalitosGrid = document.getElementById("animalitosGrid");
+// DOM
+const gridEl = document.getElementById("grid");
+const titleEl = document.getElementById("resultsTitle");
+const clockEl = document.getElementById("vzClock");
+const progressEl = document.getElementById("progressBar");
 
-const viewTriples = document.getElementById("viewTriples");
-const viewAnimalitos = document.getElementById("viewAnimalitos");
+const logoEl = document.getElementById("clientLogo");
 
-const progressBar = document.getElementById("progressBar");
-const vzClock = document.getElementById("vzClock");
-
-/**
- * ===========================
- * HELPERS
- * ===========================
- */
+function setClientLogo(src) {
+  if (!logoEl) return;
+  const url = String(src || "").trim();
+  if (!url) {
+    logoEl.style.display = "none";
+    logoEl.removeAttribute("src");
+    return;
+  }
+  logoEl.src = url;
+  logoEl.style.display = "block";
+}
 
 function esc(v) {
   return String(v ?? "")
@@ -40,410 +50,351 @@ function esc(v) {
     .replaceAll("'", "&#039;");
 }
 
-// Slots 08:00..20:00
-function buildSlots() {
-  const slots = [];
-  for (let h = 8; h <= 20; h++) slots.push(`${String(h).padStart(2, "0")}:00`);
-  return slots;
-}
-const SLOTS = buildSlots();
-
-// "08:05" -> "08:00" (redondeo hacia abajo a la hora)
-function timeToHourSlot(hhmm) {
-  const s = String(hhmm || "");
-  const [hh] = s.split(":");
+function slotTo12h(hhmm) {
+  const [hh, mm] = String(hhmm || "").split(":");
   const h = Number(hh);
-  if (Number.isNaN(h)) return null;
-  if (h < 8 || h > 20) return null;
-  return `${String(h).padStart(2, "0")}:00`;
+  const m = Number(mm);
+  if (Number.isNaN(h) || Number.isNaN(m)) return hhmm;
+  const ampm = h >= 12 ? "PM" : "AM";
+  const h12 = ((h + 11) % 12) + 1;
+  return `${String(h12).padStart(2, "0")}:${String(m).padStart(2, "0")} ${ampm}`;
 }
 
-function computeProviders(rows) {
-  const set = new Set();
-  for (const r of rows) if (r.provider) set.add(r.provider);
-  return Array.from(set).sort((a, b) => a.localeCompare(b));
+function timeToHourSlot(timeStr) {
+  const s = String(timeStr || "");
+  const hh = Number(s.split(":")[0]);
+  if (Number.isNaN(hh)) return null;
+  if (hh < 8 || hh > 20) return null;
+  return `${String(hh).padStart(2, "0")}:00`;
 }
 
-/**
- * ===========================
- * STATE
- * ===========================
- */
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+function setProgress(startTs, durationMs) {
+  if (!progressEl) return;
+  const elapsed = Date.now() - startTs;
+  const pct = Math.min(100, (elapsed / durationMs) * 100);
+  progressEl.style.width = `${pct}%`;
+}
+
+function startClock() {
+  if (!clockEl) return;
+  const tick = () => {
+    const d = new Date();
+    const h = d.getHours();
+    const m = d.getMinutes();
+    const s = d.getSeconds();
+    const ampm = h >= 12 ? "PM" : "AM";
+    const h12 = ((h + 11) % 12) + 1;
+    clockEl.textContent = `${String(h12).padStart(2, "0")}:${String(m).padStart(
+      2,
+      "0"
+    )}:${String(s).padStart(2, "0")} ${ampm}`;
+  };
+  tick();
+  setInterval(tick, 1000);
+}
+
+// ---------- STATE ----------
 const state = {
-  view: "triples", // "triples" | "animalitos"
+  mode: "triples", // "triples" | "animalitos"
   pageIndex: 0,
-  startTs: 0,
-  timerId: null,
-  rafId: null,
 
-  triples: {
-    rows: [],
-    providers: [],
-  },
+  // Triples
+  triplesRows: [],
+  triplesProviders: [],
 
-  animalitos: {
-    rows: [],
-    providers: [],
-  },
+  // Animalitos caches
+  animalitosTodayRows: [],
+  animalitosYesterdayRows: [],
+  animalitosProviders: [],
+
+  // Animalitos view alternation
+  animalitosDay: "today", // "today" | "yesterday"
+  animalitosGroupIndex: 0,
 };
 
-/**
- * ===========================
- * VIEW SWITCH (animación)
- * ===========================
- */
-function setActiveView(next) {
-  state.view = next;
+let rotationTimer = null;
+let rafTimer = null;
+let tickStart = 0;
 
-  if (next === "triples") {
-    viewTriples.classList.add("view--active");
-    viewAnimalitos.classList.remove("view--active");
-  } else {
-    viewAnimalitos.classList.add("view--active");
-    viewTriples.classList.remove("view--active");
-  }
-}
-
-/**
- * ===========================
- * NORMALIZERS
- * ===========================
- */
-async function fetchAnimalitos() {
-  try {
-    const code = deviceManager.activationCode;
-    if (!code) return;
-
-    const resp = await fetch(
-      `https://api.ssganador.lat/api/animalitos/?code=${encodeURIComponent(code)}`,
-      { cache: "no-store" }
-    );
-
-    if (!resp.ok) {
-      console.warn("Animalitos HTTP error:", resp.status);
-      return;
-    }
-
-    const payload = await resp.json();
-
-    state.animalitos.rows = normalizeAnimalitos(payload);
-    state.animalitos.providers = computeProviders(state.animalitos.rows);
-
-    console.log("Animalitos rows:", state.animalitos.rows.length);
-    console.log("Animalitos providers:", state.animalitos.providers.length);
-
-    if (state.view === "animalitos") {
-      renderCurrentPage();
-    }
-  } catch (e) {
-    console.warn("fetchAnimalitos falló:", e);
-  }
-}
-
-
+// ---------- NORMALIZERS ----------
 function normalizeTriples(raw) {
-  // backend puede venir como:
-  // [{provider, time, number}]  o  [{provider, draw_time, winning_number}]
   const out = [];
-
   for (const r of raw || []) {
-    const time = r.time ?? r.draw_time;                 // ✅ compat
-    const number = r.number ?? r.winning_number;        // ✅ compat
-
-    const slot = timeToHourSlot(time);
+    const slot = timeToHourSlot(r.time ?? r.draw_time);
     if (!slot) continue;
-
     out.push({
       provider: r.provider,
       time: slot,
-      number: String(number ?? "").trim(),
+      number: String(r.number ?? r.winning_number ?? "").trim(),
     });
   }
-
   return out;
 }
 
 function normalizeAnimalitos(raw) {
   const out = [];
-
   for (const r of raw || []) {
     const slot = timeToHourSlot(r.time);
     if (!slot) continue;
 
+    // tu API devuelve animalitos con animal/image, pero algunos providers (tipo La Ruca) no traen animal.
     out.push({
       provider: r.provider,
       time: slot,
-      number: String(r.number ?? "").padStart(2, "0"),
-      animal: (r.animal ?? r.name ?? "").trim(),
-      image: r.image ?? "",
+      number: String(r.number ?? "").trim(),
+      animal: String(r.animal ?? "").trim(),
+      image: String(r.image ?? "").trim(),
     });
   }
-
   return out;
 }
 
+function computeProviders(rows) {
+  const s = new Set();
+  for (const r of rows) if (r.provider) s.add(r.provider);
+  return Array.from(s).sort((a, b) => a.localeCompare(b));
+}
 
-
-
-/**
- * ===========================
- * LOOKUPS
- * ===========================
- */
-function rowsForProviderTriples(rows, provider) {
-  const map = new Map(); // slot -> number
+function mapRowsByProvider(rows, provider) {
+  const m = new Map();
   for (const r of rows) {
     if (r.provider !== provider) continue;
-    // si hay más de un resultado en la misma hora, el último gana
-    map.set(r.time, r.number);
+    m.set(r.time, r);
   }
-  return map;
+  return m;
 }
 
-function rowsForProviderAnimalitos(rows, provider) {
-  const map = new Map();
-  for (const r of rows) {
-    if (r.provider !== provider) continue;
-    map.set(r.time, {
-      number: r.number,
-      animal: r.animal,   // 🔥 este es el que renderizas
-      image: r.image,
-    });
+// ---------- RENDER ----------
+function renderTriplesPage() {
+  if (!gridEl) return;
+
+  if (titleEl) titleEl.textContent = "RESULTADOS HOY (TRIPLES)";
+
+  const providers = state.triplesProviders;
+  if (!providers.length) {
+    gridEl.innerHTML = `<div style="padding:16px;">Sin resultados.</div>`;
+    return;
   }
-  return map;
-}
 
-/**
- * ===========================
- * RENDER
- * ===========================
- */
-function renderProviderColumnTriples(providerName, rowsMap) {
-  const body = SLOTS.map((t) => {
-    const num = rowsMap.get(t);
-    return `
-      <div class="col__row">
-        <div class="col__time">${esc(t)}</div>
-        <div class="col__num">${num ? esc(num) : `<span class="col__empty">…</span>`}</div>
-      </div>
-    `;
-  }).join("");
+  const groups = chunk(providers, 4);
+  const group = groups[state.pageIndex] || groups[0];
+  if (!group) return;
 
-  return `
-    <article class="col">
-      <div class="col__head">
-        <div class="col__title">${esc(providerName)}</div>
-      </div>
-      <div class="col__body">${body}</div>
-    </article>
-  `;
-}
-
-function renderProviderColumnAnimalitos(providerName, rowsMap) {
-  const body = SLOTS.map((t) => {
-    const item = rowsMap.get(t);
-
-    // ✅ slot vacío
-    if (!item) {
-      return `
-        <div class="col__row col__row--animal">
-          <div class="col__time">${esc(t)}</div>
-          <div class="col__num col__num--animal"><span class="col__empty">…</span></div>
-          <div class="col__nameWrap">
-            <div class="col__name"><span class="col__empty">…</span></div>
+  const html = group
+    .map((p) => {
+      const byTime = mapRowsByProvider(state.triplesRows, p);
+      const rowsHtml = SLOTS.map((t) => {
+        const rec = byTime.get(t);
+        return `
+          <div class="col__row">
+            <div class="col__time">${esc(slotTo12h(t))}</div>
+            <div class="col__num">${rec?.number ? esc(rec.number) : `<span class="col__empty">…</span>`}</div>
           </div>
-        </div>
+        `;
+      }).join("");
+
+      return `
+        <article class="col">
+          <div class="col__head"><div class="col__title">${esc(p)}</div></div>
+          <div class="col__body">${rowsHtml}</div>
+        </article>
       `;
-    }
-
-    // ✅ slot con data (blindado)
-    const num = item.number ?? "";
-    const animal = item.animal ?? "";
-    const img = item.image
-      ? `<img class="col__icon" src="${esc(item.image)}" alt="" loading="lazy" />`
-      : "";
-
-    return `
-      <div class="col__row col__row--animal">
-        <div class="col__time">${esc(t)}</div>
-        <div class="col__num col__num--animal">${esc(num)}</div>
-        <div class="col__nameWrap">
-          <div class="col__name">${esc(animal)}</div>
-          ${img}
-        </div>
-      </div>
-    `;
-  }).join("");
-
-  return `
-    <article class="col">
-      <div class="col__head">
-        <div class="col__title">${esc(providerName)}</div>
-      </div>
-      <div class="col__body">${body}</div>
-    </article>
-  `;
-}
-
-
-function renderCurrentPage() {
-  const isTriples = state.view === "triples";
-  const dataset = isTriples ? state.triples : state.animalitos;
-
-  const grid = isTriples ? triplesGrid : animalitosGrid;
-  if (!grid) return;
-
-  const start = state.pageIndex * 4;
-  const pageProviders = dataset.providers.slice(start, start + 4);
-
-  // Si se acabaron las páginas de esta vista
-  if (!pageProviders.length && dataset.providers.length) {
-    state.pageIndex = 0;
-
-    // alternar vista
-    setActiveView(isTriples ? "animalitos" : "triples");
-
-    return renderCurrentPage();
-  }
-
-  const html = pageProviders
-    .map((providerName) => {
-      if (isTriples) {
-        return renderProviderColumnTriples(
-          providerName,
-          rowsForProviderTriples(dataset.rows, providerName)
-        );
-      }
-
-      return renderProviderColumnAnimalitos(
-        providerName,
-        rowsForProviderAnimalitos(dataset.rows, providerName)
-      );
     })
     .join("");
 
-  grid.innerHTML = html;
+  gridEl.innerHTML = html;
 }
 
+function renderAnimalitosGroup(day) {
+  if (!gridEl) return;
 
-/**
- * ===========================
- * PAGER + PROGRESS
- * ===========================
- */
-function stopPager() {
-  if (state.timerId) clearInterval(state.timerId);
-  state.timerId = null;
-  if (state.rafId) cancelAnimationFrame(state.rafId);
-  state.rafId = null;
-  state.startTs = 0;
+  const rows = day === "today" ? state.animalitosTodayRows : state.animalitosYesterdayRows;
+
+  if (titleEl) titleEl.textContent = day === "today" ? "RESULTADOS HOY (ANIMALITOS)" : "RESULTADOS AYER (ANIMALITOS)";
+
+  const providers = state.animalitosProviders;
+  if (!providers.length) {
+    gridEl.innerHTML = `<div style="padding:16px;">Sin animalitos.</div>`;
+    return;
+  }
+
+  const groups = chunk(providers, 4);
+  const group = groups[state.animalitosGroupIndex] || groups[0];
+  if (!group) return;
+
+  const html = group
+    .map((p) => {
+      const byTime = mapRowsByProvider(rows, p);
+      const rowsHtml = SLOTS.map((t) => {
+        const rec = byTime.get(t);
+        const img = rec?.image ? `<img class="col__icon" src="${esc(rec.image)}" alt="" loading="lazy" />` : "";
+        const animal = rec?.animal ? esc(rec.animal) : `<span class="col__empty">…</span>`;
+        const num = rec?.number ? esc(rec.number) : `<span class="col__empty">…</span>`;
+
+        return `
+          <div class="col__row col__row--animal">
+            <div class="col__time">${esc(slotTo12h(t))}</div>
+            <div class="col__num col__num--animal">${num}</div>
+            <div class="col__nameWrap">
+              <div class="col__name">${animal}</div>
+              ${img}
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      return `
+        <article class="col">
+          <div class="col__head"><div class="col__title">${esc(p)}</div></div>
+          <div class="col__body">${rowsHtml}</div>
+        </article>
+      `;
+    })
+    .join("");
+
+  gridEl.innerHTML = html;
 }
 
-function startPager() {
-  if (state.timerId || state.rafId) return; // idempotente
+function render() {
+  if (state.mode === "triples") renderTriplesPage();
+  else renderAnimalitosGroup(state.animalitosDay);
+}
 
-  state.startTs = Date.now();
+// ---------- DATA FETCH (ANIMALITOS) ----------
+function getApiBase() {
+  return window.__APP_CONFIG__?.API_BASE || "https://api.ssganador.lat";
+}
 
-  const tick = () => {
-    if (progressBar && state.startTs) {
-      const elapsed = Date.now() - state.startTs;
-      const pct = Math.min(100, (elapsed / ROTATION_MS) * 100);
-      progressBar.style.width = `${pct}%`;
+function getDateISO(offset) {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+async function fetchAnimalitosByDate(dateISO) {
+  const code = deviceManager.activationCode || localStorage.getItem("activation_code") || "DEV";
+  const api = getApiBase();
+  const url = `${api}/api/animalitos/?code=${encodeURIComponent(code)}&date=${encodeURIComponent(dateISO)}`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) return [];
+  const payload = await res.json();
+  return normalizeAnimalitos(payload);
+}
+
+async function refreshAnimalitosCaches() {
+  const todayISO = getDateISO(0);
+  const yISO = getDateISO(-1);
+
+  const [todayRows, yRows] = await Promise.all([
+    fetchAnimalitosByDate(todayISO),
+    fetchAnimalitosByDate(yISO),
+  ]);
+
+  state.animalitosTodayRows = todayRows;
+  state.animalitosYesterdayRows = yRows;
+
+  // Providers list: usa la unión de ambos días para no “encoger” grupos
+  const providers = computeProviders([...todayRows, ...yRows]);
+  state.animalitosProviders = providers;
+}
+
+// ---------- ROTATION ----------
+function stopRotation() {
+  if (rotationTimer) clearInterval(rotationTimer);
+  rotationTimer = null;
+  if (rafTimer) cancelAnimationFrame(rafTimer);
+  rafTimer = null;
+}
+
+function startRotation(durationMs) {
+  stopRotation();
+  tickStart = Date.now();
+
+  const raf = () => {
+    setProgress(tickStart, durationMs);
+    rafTimer = requestAnimationFrame(raf);
+  };
+  rafTimer = requestAnimationFrame(raf);
+
+  rotationTimer = setInterval(() => {
+    tickStart = Date.now();
+
+    if (state.mode === "triples") {
+      const groups = chunk(state.triplesProviders, 4);
+      state.pageIndex += 1;
+
+      if (state.pageIndex >= groups.length) {
+        // cambia a animalitos
+        state.mode = "animalitos";
+        state.pageIndex = 0;
+        state.animalitosDay = "today";
+        state.animalitosGroupIndex = 0;
+        render();
+        startRotation(ANIMALITOS_INTERVAL_MS);
+        return;
+      }
+
+      render();
+      return;
     }
-    state.rafId = requestAnimationFrame(tick);
-  };
-  state.rafId = requestAnimationFrame(tick);
 
-  state.timerId = setInterval(() => {
-    state.pageIndex += 1;
-    state.startTs = Date.now();
-    renderCurrentPage();
-  }, ROTATION_MS);
+    // animalitos: alterna HOY/AYER y avanza grupo cada ciclo completo
+    if (state.animalitosDay === "today") {
+      state.animalitosDay = "yesterday";
+    } else {
+      state.animalitosDay = "today";
+      const groups = chunk(state.animalitosProviders, 4);
+      state.animalitosGroupIndex = (state.animalitosGroupIndex + 1) % Math.max(1, groups.length);
+    }
+
+    render();
+  }, durationMs);
 }
 
-/**
- * ===========================
- * CLOCK (solo UI)
- * ===========================
- */
-function startClock() {
-  if (!vzClock) return;
-
-  const upd = () => {
-    const d = new Date();
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mm = String(d.getMinutes()).padStart(2, "0");
-    const ss = String(d.getSeconds()).padStart(2, "0");
-    vzClock.textContent = `${hh}:${mm}:${ss}`;
-  };
-
-  upd();
-  setInterval(upd, 1000);
-}
-
-
-/**
- * ===========================
- * FETCH ANIMALITOS (HTTP)
- * ===========================
- */
-
-
-/**
- * ===========================
- * EVENTS
- * ===========================
- */
-window.addEventListener("deviceActivated", async () => {
-  await fetchAnimalitos();
-  setInterval(fetchAnimalitos, ANIMALITOS_REFRESH_MS);
-});
-
-
-// Triples vienen por DeviceManager (polling /api/results/)
+// ---------- EVENTS ----------
 window.addEventListener("resultsUpdated", (e) => {
   const raw = Array.isArray(e.detail) ? e.detail : [];
-  console.log("Triples payload sample:", raw[0]);
+  state.triplesRows = normalizeTriples(raw);
+  state.triplesProviders = computeProviders(state.triplesRows);
 
-  state.triples.rows = normalizeTriples(raw);
-  state.triples.providers = computeProviders(state.triples.rows);
-
-  console.log("Triples rows:", state.triples.rows.length);
-  console.log("Triples providers:", state.triples.providers.length);
-
-  if (!state.triples.providers.length) return;
-
-  if (state.view === "triples") renderCurrentPage();
-  startPager();
+  // primer render inmediato si estamos en triples
+  if (state.mode === "triples") render();
 });
 
-/**
- * ===========================
- * BOOT
- * ===========================
- */
+window.addEventListener("deviceActivated", async () => {
+  // en tu alpha local, esto puede que no se dispare; igual hacemos refresh por boot
+  await refreshAnimalitosCaches();
+});
+
+// ---------- BOOT ----------
 (async () => {
   startClock();
-  setActiveView("triples");
 
-  // Register si no hay activation code
-  //if (!deviceManager.activationCode) {
-  //  await deviceManager.register();
- // }
+  // Ensure activation code (DEV in local)
+  await deviceManager.ensureActivationCode();
 
-  // WS
+  // WS + fallback status + primera carga
   deviceManager.connectSocket();
-
-  // Status fallback
-  try {
-    await deviceManager.syncStatusOnce();
-  } catch (_) {}
-
-  // ✅ Render inmediato (sin depender del WS)
+  await deviceManager.syncStatusOnce();
   await deviceManager.fetchResultsOnce();
-  await fetchAnimalitos();
 
-  // ✅ Arranca refresh periódico animalitos aunque no llegue deviceActivated
-  setInterval(fetchAnimalitos, ANIMALITOS_REFRESH_MS);
-})();
+  await refreshAnimalitosCaches();
+  setInterval(refreshAnimalitosCaches, ANIMALITOS_REFRESH_MS);
+  setClientLogo(window.__APP_CONFIG__?.CLIENT_LOGO || "");
 
+  // Render inicial
+  render();
+  startRotation(ROTATION_MS);
+})().catch((e) => {
+  console.error("BOOT ERROR:", e);
+  if (gridEl) gridEl.innerHTML = `<div style="padding:16px;">Error: ${esc(e.message || e)}</div>`;
+});

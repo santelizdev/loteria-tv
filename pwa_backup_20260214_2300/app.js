@@ -437,7 +437,10 @@ window.addEventListener("resultsUpdated", (e) => {
   // Status fallback
   try {
     await deviceManager.syncStatusOnce();
-  } catch (_) {}
+  } catch (_) {
+        if (data.client_logo_url) window.dispatchEvent(new CustomEvent("clientLogo", { detail: data.client_logo_url }));
+        window.addEventListener("clientLogo", (e) => setClientLogo(e.detail));
+  }
 
   // ✅ Render inmediato (sin depender del WS)
   await deviceManager.fetchResultsOnce();
