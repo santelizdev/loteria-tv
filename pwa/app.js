@@ -100,6 +100,7 @@ function startClock() {
 }
 
 // ---------- STATE ----------
+state.deviceCode = "----";
 const state = {
   mode: "triples", // "triples" | "animalitos"
   pageIndex: 0,
@@ -409,7 +410,9 @@ function renderDeviceCode(code) {
 renderDeviceCode(localStorage.getItem("activation_code") || new URL(location.href).searchParams.get("code"));
 
 const code = await deviceManager.ensureActivationCode();
-renderDeviceCode(code);
+state.deviceCode = code ? String(code).toUpperCase() : "----";
+render(); // asegura que el render lo pinte
+
 
   // 2) WS + fallback status + primera carga
   deviceManager.connectSocket();

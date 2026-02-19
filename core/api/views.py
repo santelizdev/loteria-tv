@@ -266,10 +266,11 @@ class DeviceRegisterView(APIView):
     def _generate_code(self):
         return "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
-    def _get_ip(self, request):
+    def get_client_ip(request):
         xff = request.META.get("HTTP_X_FORWARDED_FOR")
-        return xff.split(",")[0] if xff else request.META.get("REMOTE_ADDR")
-
+        if xff:
+            return xff.split(",")[0].strip()
+        return request.META.get("REMOTE_ADDR")
 
 class DeviceHeartbeatAPIView(APIView):
     authentication_classes = []

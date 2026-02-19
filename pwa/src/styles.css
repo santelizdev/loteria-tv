@@ -331,3 +331,4 @@ html, body {
   .col__icon { width: 30px; height: 30px; }
   .progress-track { height: 10px; }
 }
+.device-code { font-size: 18px; font-weight: 700; }
