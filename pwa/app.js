@@ -100,22 +100,16 @@ function startClock() {
 }
 
 // ---------- STATE ----------
-state.deviceCode = "----";
 const state = {
-  mode: "triples", // "triples" | "animalitos"
+  deviceCode: "----",
+  mode: "triples",
   pageIndex: 0,
-
-  // Triples
   triplesRows: [],
   triplesProviders: [],
-
-  // Animalitos caches
   animalitosTodayRows: [],
   animalitosYesterdayRows: [],
   animalitosProviders: [],
-
-  // Animalitos view alternation
-  animalitosDay: "today", // "today" | "yesterday"
+  animalitosDay: "today",
   animalitosGroupIndex: 0,
 };
 
@@ -410,8 +404,12 @@ function renderDeviceCode(code) {
 renderDeviceCode(localStorage.getItem("activation_code") || new URL(location.href).searchParams.get("code"));
 
 const code = await deviceManager.ensureActivationCode();
-state.deviceCode = code ? String(code).toUpperCase() : "----";
-render(); // asegura que el render lo pinte
+state.deviceCode = String(code || "----").toUpperCase();
+
+const el = document.getElementById("deviceCode");
+if (el) el.textContent = state.deviceCode;
+
+render(); // importante: render después de setear state.deviceCode
 
 
   // 2) WS + fallback status + primera carga
