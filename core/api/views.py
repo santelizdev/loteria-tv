@@ -8,6 +8,7 @@ import string
 from datetime import datetime
 from typing import Optional
 
+from django.conf import settings   
 from django.db.models import Count, Max
 from django.utils import timezone
 from rest_framework import status
@@ -24,6 +25,8 @@ from core.models import (
 from core.services.device_redis_service import DeviceRedisService
 from core.services.device_service import DeviceService
 
+RESULTS_CACHE_TTL_SECONDS = 3   # o 0 si quieres sin cache
+DEVICE_HEARTBEAT_TTL_SECONDS = 90
 
 def _format_time_12h(value) -> str:
     return value.strftime("%I:%M %p")
@@ -112,7 +115,7 @@ class CurrentResultsAPIView(APIView):
     authentication_classes = []
     permission_classes = []
 
-    CACHE_TTL = 120
+    CACHE_TTL = getattr(settings, "RESULTS_CACHE_TTL_SECONDS", 5)
 
     def get(self, request):
         activation_code = request.query_params.get("code")
@@ -179,8 +182,7 @@ class AnimalitosResultsAPIView(APIView):
     authentication_classes = []
     permission_classes = []
 
-    CACHE_TTL = 120
-
+    CACHE_TTL = getattr(settings, "RESULTS_CACHE_TTL_SECONDS", 5)   
     def get(self, request):
         activation_code = request.query_params.get("code")
         ip_address = get_client_ip(request)

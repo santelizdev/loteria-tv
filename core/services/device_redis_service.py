@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Optional
 
 from django.conf import settings
@@ -19,21 +18,24 @@ except Exception:  # pragma: no cover
 class DeviceRedisService:
     """
     Wrapper único para:
-      - heartbeats de dispositivos
+      - heartbeats de dispositivos (online/offline)
       - cache de endpoints (results/animalitos)
       - invalidación por key y por patrón
 
-    Importante:
-      - Usa Django cache como fuente principal (CACHES=django_redis).
-      - delete_pattern requiere cliente redis real; si no existe, no rompe: retorna 0.
+    Notas importantes:
+      - Si hay 2 clases con el mismo nombre en el mismo archivo,
+        Python se queda con la última (esto rompía tu comportamiento).
+      - Este archivo deja UNA sola clase (fuente de verdad).
     """
 
-    TTL_SECONDS = 90
-    DEFAULT_REDIS_ALIAS = "default"
+    # Heartbeat TTL (online/offline) -> esto sí puede ser más “largo”
+    HEARTBEAT_TTL_SECONDS = getattr(settings, "DEVICE_HEARTBEAT_TTL_SECONDS", 90)
 
-    @staticmethod
-    def _device_key(activation_code: str) -> str:
-        return f"device:{activation_code}"
+    # Cache "resultados" -> por defecto BAJITO (tiempo real)
+    # Si quieres apagarlo globalmente: RESULTS_CACHE_TTL_SECONDS=0
+    RESULTS_CACHE_TTL_SECONDS = getattr(settings, "RESULTS_CACHE_TTL_SECONDS", 5)
+
+    DEFAULT_REDIS_ALIAS = getattr(settings, "DEVICE_REDIS_ALIAS", "default")
 
     # -------------------------
     # Redis client helpers
@@ -42,15 +44,19 @@ class DeviceRedisService:
     def get_client(cls):
         """
         Devuelve un cliente Redis (django-redis) para SCAN/DEL por patrón.
+        Si no existe (no es django-redis), levanta excepción.
         """
         if get_redis_connection is None:
             raise AttributeError("django-redis is not installed/configured")
-
         return get_redis_connection(cls.DEFAULT_REDIS_ALIAS)
 
     # -------------------------
     # Heartbeat
     # -------------------------
+    @staticmethod
+    def _device_key(activation_code: str) -> str:
+        return f"device:{activation_code}"
+
     @classmethod
     def heartbeat(cls, *, activation_code: str, ip_address: str, branch_id: int | None):
         key = cls._device_key(activation_code)
@@ -59,7 +65,7 @@ class DeviceRedisService:
             "ip": ip_address,
             "branch_id": branch_id,
         }
-        cache.set(key, payload, timeout=cls.TTL_SECONDS)
+        cache.set(key, payload, timeout=cls.HEARTBEAT_TTL_SECONDS)
 
     @classmethod
     def is_online(cls, *, activation_code: str) -> bool:
@@ -78,7 +84,20 @@ class DeviceRedisService:
 
     @staticmethod
     def set_cache(key: str, value, ttl_seconds: int):
-        cache.set(key, value, timeout=ttl_seconds)
+        """
+        Guarda un valor genérico en Redis/Django cache.
+
+        Regla CLAVE (tiempo real):
+          - Si ttl_seconds <= 0 => NO cachea (y borra si existía).
+        """
+        if ttl_seconds is None:
+            ttl_seconds = 0
+
+        if int(ttl_seconds) <= 0:
+            cache.delete(key)
+            return
+
+        cache.set(key, value, timeout=int(ttl_seconds))
 
     @staticmethod
     def delete_cache(key: str) -> int:
@@ -96,11 +115,9 @@ class DeviceRedisService:
         try:
             client = cls.get_client()
         except Exception:
-            # No hay redis client real (o no es django-redis): no rompas la app.
             return 0
 
         deleted = 0
-        # scan_iter devuelve bytes en redis-py; normalizamos.
         for k in client.scan_iter(match=pattern, count=500):
             deleted += int(client.delete(k) or 0)
         return deleted
