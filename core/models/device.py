@@ -3,6 +3,13 @@ from channels.layers import get_channel_layer
 from django.db import models
 from core.ws.events import notify_device
 
+def get_client_ip(request):
+    xff = request.META.get("HTTP_X_FORWARDED_FOR")
+    if xff:
+        # "ip, proxy1, proxy2"
+        return xff.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR")
+
 class Device(models.Model):
     device_id = models.CharField(max_length=100, unique=True)
 
@@ -29,7 +36,7 @@ class Device(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
 
-  
+
 def assign_branch(self, branch):
     self.branch = branch
     self.is_active = True  # si corresponde en tu flujo

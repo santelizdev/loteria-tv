@@ -1,8 +1,5 @@
 # core/services/device_service.py
-
 from __future__ import annotations
-
-from typing import Iterable
 
 from django.conf import settings
 from django.core.cache import cache
@@ -27,20 +24,33 @@ class DeviceService:
 
     @staticmethod
     def _is_bypassed(activation_code: str) -> bool:
-        # Solo permitimos bypass cuando DEBUG=True
         if not settings.DEBUG:
             return False
         return activation_code.strip().upper() in DeviceService._bypass_codes()
 
     @staticmethod
+    def _normalize_ip(ip_address: str | None) -> str:
+        """
+        Asegura que guardamos solo la IP (por si llega "ip, proxy1, proxy2").
+        """
+        ip = (ip_address or "").strip()
+        if not ip:
+            return ""
+        # por si accidentalmente pasan XFF completo
+        if "," in ip:
+            ip = ip.split(",")[0].strip()
+        return ip
+
+    @staticmethod
     def validate_device(*, activation_code: str, ip_address: str) -> Device:
-        """
-        Valida device, branch, IP y registra heartbeat.
-        Si activation_code está en DEVICE_BYPASS_CODES (solo DEBUG), permite pasar sin branch.
-        """
-        activation_code = (activation_code or "").strip()
+        activation_code = (activation_code or "").strip().upper()
+        ip_address = DeviceService._normalize_ip(ip_address)
+
         if not activation_code:
             raise PermissionError("Missing activation code")
+        if not ip_address:
+            # Si llega vacío, algo anda mal en la view / proxy headers
+            raise PermissionError("Missing IP address")
 
         try:
             device = Device.objects.select_related("branch__client").get(
@@ -61,7 +71,7 @@ class DeviceService:
             if not device.is_active:
                 raise PermissionError("Device is inactive")
 
-            # IP fija
+            # IP fija (amarre)
             if device.registered_ip:
                 if device.registered_ip != ip_address:
                     raise PermissionError("IP address mismatch for this device")
@@ -69,7 +79,7 @@ class DeviceService:
                 device.registered_ip = ip_address
                 device.save(update_fields=["registered_ip"])
         else:
-            # En bypass: igual dejamos el IP registrado si está vacío, para que no sea caos
+            # bypass: si no hay IP registrada, la guardamos
             if not device.registered_ip:
                 device.registered_ip = ip_address
                 device.save(update_fields=["registered_ip"])

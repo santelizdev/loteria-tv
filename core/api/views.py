@@ -25,6 +25,29 @@ from core.services.device_redis_service import DeviceRedisService
 from core.services.device_service import DeviceService
 
 
+# -------------------------
+# IP helpers
+# -------------------------
+def get_client_ip(request) -> str:
+    """
+    Intenta resolver IP real detrás de Nginx/Proxy.
+    Orden:
+      1) X-Forwarded-For (primer IP)
+      2) X-Real-IP
+      3) REMOTE_ADDR
+    """
+    xff = request.META.get("HTTP_X_FORWARDED_FOR")
+    if xff:
+        # por si llega "ip, proxy1, proxy2"
+        return xff.split(",")[0].strip()
+
+    x_real = request.META.get("HTTP_X_REAL_IP")
+    if x_real:
+        return x_real.strip()
+
+    return (request.META.get("REMOTE_ADDR") or "").strip()
+
+
 def _format_time_12h(value) -> str:
     return value.strftime("%I:%M %p")
 
@@ -90,28 +113,40 @@ class CurrentResultsAPIView(APIView):
 
     def get(self, request):
         activation_code = request.query_params.get("code")
-        ip_address = request.META.get("REMOTE_ADDR")
+        ip_address = get_client_ip(request)
 
         if not activation_code:
-            return Response({"detail": "Missing activation code"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Missing activation code"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # validar device
         try:
-            DeviceService.validate_device(activation_code=activation_code, ip_address=ip_address)
+            DeviceService.validate_device(
+                activation_code=activation_code,
+                ip_address=ip_address,
+            )
         except PermissionError as e:
             return Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN)
 
         raw_date = request.query_params.get("date")
         parsed = _parse_date(raw_date)
         if parsed == "INVALID":
-            return Response({"detail": "Invalid date format. Use YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Invalid date format. Use YYYY-MM-DD"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         target_date = parsed or _resolve_target_date_for_triples()
         if not target_date:
             return Response([], status=status.HTTP_200_OK)
 
         today = timezone.localdate()
-        use_archive = target_date < today and ResultArchive.objects.filter(draw_date=target_date).exists()
+        use_archive = (
+            target_date < today
+            and ResultArchive.objects.filter(draw_date=target_date).exists()
+        )
 
         # cache key por fecha + origen
         cache_version = "v2"
@@ -165,28 +200,40 @@ class AnimalitosResultsAPIView(APIView):
 
     def get(self, request):
         activation_code = request.query_params.get("code")
-        ip_address = request.META.get("REMOTE_ADDR")
+        ip_address = get_client_ip(request)
 
         if not activation_code:
-            return Response({"detail": "Missing activation code"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Missing activation code"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # validar device
         try:
-            DeviceService.validate_device(activation_code=activation_code, ip_address=ip_address)
+            DeviceService.validate_device(
+                activation_code=activation_code,
+                ip_address=ip_address,
+            )
         except PermissionError as e:
             return Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN)
 
         raw_date = request.query_params.get("date")
         parsed = _parse_date(raw_date)
         if parsed == "INVALID":
-            return Response({"detail": "Invalid date format. Use YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Invalid date format. Use YYYY-MM-DD"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         target_date = parsed or _resolve_target_date_for_animalitos()
         if not target_date:
             return Response([], status=status.HTTP_200_OK)
 
         today = timezone.localdate()
-        use_archive = target_date < today and AnimalitoArchive.objects.filter(draw_date=target_date).exists()
+        use_archive = (
+            target_date < today
+            and AnimalitoArchive.objects.filter(draw_date=target_date).exists()
+        )
 
         cache_version = "v3"
         origin = "archive" if use_archive else "current"
@@ -240,16 +287,22 @@ class DeviceRegisterView(APIView):
     def post(self, request):
         device_id = request.data.get("device_id")
         if not device_id:
-            return Response({"error": "device_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "device_id is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         activation_code = self._generate_code()
-        ip = self._get_ip(request)
+        ip = get_client_ip(request)
 
+        # OJO IMPORTANTE:
+        # - NO amarramos registered_ip aquí si el device está inactivo
+        #   (así evitas mismatch cuando el device cambia de red antes de activarse).
         device, created = Device.objects.get_or_create(
             device_id=device_id,
             defaults={
                 "activation_code": activation_code,
-                "registered_ip": ip,
+                "registered_ip": None,   # <= antes estabas guardando ip aquí
                 "is_active": False,
             },
         )
@@ -259,6 +312,7 @@ class DeviceRegisterView(APIView):
                 "device_id": device.device_id,
                 "activation_code": device.activation_code,
                 "registered": device.is_active,
+                "ip_detected": ip,  # útil para debug (no rompe clientes existentes)
             },
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
@@ -266,11 +320,6 @@ class DeviceRegisterView(APIView):
     def _generate_code(self):
         return "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
-    def get_client_ip(request):
-        xff = request.META.get("HTTP_X_FORWARDED_FOR")
-        if xff:
-            return xff.split(",")[0].strip()
-        return request.META.get("REMOTE_ADDR")
 
 class DeviceHeartbeatAPIView(APIView):
     authentication_classes = []
@@ -279,13 +328,19 @@ class DeviceHeartbeatAPIView(APIView):
     def post(self, request):
         device_id = request.data.get("device_id")
         activation_code = request.data.get("code")
-        ip_address = request.META.get("REMOTE_ADDR")
+        ip_address = get_client_ip(request)
 
         if not device_id or not activation_code:
-            return Response({"detail": "Missing credentials"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Missing credentials"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
-            DeviceService.validate_device(activation_code=activation_code, ip_address=ip_address)
+            DeviceService.validate_device(
+                activation_code=activation_code,
+                ip_address=ip_address,
+            )
         except PermissionError as e:
             return Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN)
 
@@ -299,12 +354,20 @@ class DeviceStatusAPIView(APIView):
     def get(self, request):
         activation_code = request.query_params.get("code")
         if not activation_code:
-            return Response({"detail": "Missing activation code"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Missing activation code"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
-            device = Device.objects.select_related("branch__client").get(activation_code=activation_code)
+            device = Device.objects.select_related("branch__client").get(
+                activation_code=activation_code
+            )
         except Device.DoesNotExist:
-            return Response({"detail": "Invalid activation code"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"detail": "Invalid activation code"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         branch = device.branch
         client = branch.client if branch and getattr(branch, "client_id", None) else None
@@ -321,4 +384,3 @@ class DeviceStatusAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
-
