@@ -397,16 +397,26 @@ window.addEventListener("deviceActivated", async () => {
 (async () => {
   startClock();
 
-  // Ensure activation code (DEV in local)
-  await deviceManager.ensureActivationCode();
+  renderDeviceCode(deviceManager.activationCode);
 
-  // WS + fallback status + primera carga
+  // SHOW COD-ACTIVACION IN HTML
+  function renderDeviceCode(code) {
+    const el = document.getElementById("deviceCode");
+    if (el) el.textContent = code ? String(code).toUpperCase() : "----";
+  }
+
+  // 1) ensure code SOLO UNA VEZ
+  const code = await deviceManager.ensureActivationCode();
+  renderDeviceCode(code);
+
+  // 2) WS + fallback status + primera carga
   deviceManager.connectSocket();
   await deviceManager.syncStatusOnce();
   await deviceManager.fetchResultsOnce();
 
   await refreshAnimalitosCaches();
   setInterval(refreshAnimalitosCaches, ANIMALITOS_REFRESH_MS);
+
   setClientLogo(window.__APP_CONFIG__?.CLIENT_LOGO || "");
 
   // Render inicial
@@ -416,3 +426,4 @@ window.addEventListener("deviceActivated", async () => {
   console.error("BOOT ERROR:", e);
   if (gridEl) gridEl.innerHTML = `<div style="padding:16px;">Error: ${esc(e.message || e)}</div>`;
 });
+
