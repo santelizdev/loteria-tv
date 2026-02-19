@@ -8,7 +8,7 @@ import string
 from datetime import datetime
 from typing import Optional
 
-from django.db.models import Max
+from django.db.models import Count, Max
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
@@ -23,29 +23,6 @@ from core.models import (
 )
 from core.services.device_redis_service import DeviceRedisService
 from core.services.device_service import DeviceService
-
-
-# -------------------------
-# IP helpers
-# -------------------------
-def get_client_ip(request) -> str:
-    """
-    Intenta resolver IP real detrás de Nginx/Proxy.
-    Orden:
-      1) X-Forwarded-For (primer IP)
-      2) X-Real-IP
-      3) REMOTE_ADDR
-    """
-    xff = request.META.get("HTTP_X_FORWARDED_FOR")
-    if xff:
-        # por si llega "ip, proxy1, proxy2"
-        return xff.split(",")[0].strip()
-
-    x_real = request.META.get("HTTP_X_REAL_IP")
-    if x_real:
-        return x_real.strip()
-
-    return (request.META.get("REMOTE_ADDR") or "").strip()
 
 
 def _format_time_12h(value) -> str:
@@ -105,6 +82,32 @@ def _resolve_target_date_for_animalitos():
     return last_archive
 
 
+def _signature_for_triples(*, target_date, use_archive: bool) -> str:
+    """
+    Firma barata para invalidar cache cuando entran resultados nuevos.
+    Evita el síntoma de "se quedó pegado a las 12pm" por caches viejos.
+    """
+    model = ResultArchive if use_archive else CurrentResult
+    agg = model.objects.filter(draw_date=target_date).aggregate(
+        n=Count("id"),
+        last=Max("draw_time"),
+    )
+    n = agg["n"] or 0
+    last = agg["last"].isoformat() if agg["last"] else "none"
+    return f"{n}:{last}"
+
+
+def _signature_for_animalitos(*, target_date, use_archive: bool) -> str:
+    model = AnimalitoArchive if use_archive else AnimalitoResult
+    agg = model.objects.filter(draw_date=target_date).aggregate(
+        n=Count("id"),
+        last=Max("draw_time"),
+    )
+    n = agg["n"] or 0
+    last = agg["last"].isoformat() if agg["last"] else "none"
+    return f"{n}:{last}"
+
+
 class CurrentResultsAPIView(APIView):
     authentication_classes = []
     permission_classes = []
@@ -123,10 +126,7 @@ class CurrentResultsAPIView(APIView):
 
         # validar device
         try:
-            DeviceService.validate_device(
-                activation_code=activation_code,
-                ip_address=ip_address,
-            )
+            DeviceService.validate_device(activation_code=activation_code, ip_address=ip_address)
         except PermissionError as e:
             return Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN)
 
@@ -143,50 +143,33 @@ class CurrentResultsAPIView(APIView):
             return Response([], status=status.HTTP_200_OK)
 
         today = timezone.localdate()
-        use_archive = (
-            target_date < today
-            and ResultArchive.objects.filter(draw_date=target_date).exists()
-        )
+        use_archive = target_date < today and ResultArchive.objects.filter(draw_date=target_date).exists()
 
-        # cache key por fecha + origen
-        cache_version = "v2"
+        # cache key por fecha + origen + firma (count + max draw_time)
+        cache_version = "v3"
         origin = "archive" if use_archive else "current"
-        cache_key = f"results:triples:{cache_version}:{origin}:{target_date.isoformat()}"
+        sig = _signature_for_triples(target_date=target_date, use_archive=use_archive)
+        cache_key = f"results:triples:{cache_version}:{origin}:{target_date.isoformat()}:{sig}"
 
         cached = DeviceRedisService.get_cache(cache_key)
-        if cached:
+        if cached is not None:
             return Response(cached, status=status.HTTP_200_OK)
 
-        if use_archive:
-            qs = (
-                ResultArchive.objects.select_related("provider")
-                .filter(draw_date=target_date, provider__is_active=True)
-                .order_by("provider__name", "draw_time")
-            )
-            data = [
-                {
-                    "provider": r.provider.name,
-                    "time": _format_time_12h(r.draw_time),
-                    "number": r.winning_number,
-                    "image": r.image_url or "",
-                }
-                for r in qs
-            ]
-        else:
-            qs = (
-                CurrentResult.objects.select_related("provider")
-                .filter(draw_date=target_date, provider__is_active=True)
-                .order_by("provider__name", "draw_time")
-            )
-            data = [
-                {
-                    "provider": r.provider.name,
-                    "time": _format_time_12h(r.draw_time),
-                    "number": r.winning_number,
-                    "image": r.image_url or "",
-                }
-                for r in qs
-            ]
+        model = ResultArchive if use_archive else CurrentResult
+        qs = (
+            model.objects.select_related("provider")
+            .filter(draw_date=target_date, provider__is_active=True)
+            .order_by("provider__name", "draw_time")
+        )
+        data = [
+            {
+                "provider": r.provider.name,
+                "time": _format_time_12h(r.draw_time),
+                "number": r.winning_number,
+                "image": r.image_url or "",
+            }
+            for r in qs
+        ]
 
         DeviceRedisService.set_cache(cache_key, data, ttl_seconds=self.CACHE_TTL)
         return Response(data, status=status.HTTP_200_OK)
@@ -210,10 +193,7 @@ class AnimalitosResultsAPIView(APIView):
 
         # validar device
         try:
-            DeviceService.validate_device(
-                activation_code=activation_code,
-                ip_address=ip_address,
-            )
+            DeviceService.validate_device(activation_code=activation_code, ip_address=ip_address)
         except PermissionError as e:
             return Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN)
 
@@ -230,51 +210,33 @@ class AnimalitosResultsAPIView(APIView):
             return Response([], status=status.HTTP_200_OK)
 
         today = timezone.localdate()
-        use_archive = (
-            target_date < today
-            and AnimalitoArchive.objects.filter(draw_date=target_date).exists()
-        )
+        use_archive = target_date < today and AnimalitoArchive.objects.filter(draw_date=target_date).exists()
 
-        cache_version = "v3"
+        cache_version = "v4"
         origin = "archive" if use_archive else "current"
-        cache_key = f"results:animalitos:{cache_version}:{origin}:{target_date.isoformat()}"
+        sig = _signature_for_animalitos(target_date=target_date, use_archive=use_archive)
+        cache_key = f"results:animalitos:{cache_version}:{origin}:{target_date.isoformat()}:{sig}"
 
         cached = DeviceRedisService.get_cache(cache_key)
-        if cached:
+        if cached is not None:
             return Response(cached, status=status.HTTP_200_OK)
 
-        if use_archive:
-            qs = (
-                AnimalitoArchive.objects.select_related("provider")
-                .filter(draw_date=target_date)
-                .order_by("provider__name", "draw_time")
-            )
-            data = [
-                {
-                    "provider": r.provider.name,
-                    "time": _format_time_12h(r.draw_time),
-                    "number": str(r.animal_number),
-                    "animal": r.animal_name,
-                    "image": r.animal_image_url,
-                }
-                for r in qs
-            ]
-        else:
-            qs = (
-                AnimalitoResult.objects.select_related("provider")
-                .filter(draw_date=target_date)
-                .order_by("provider__name", "draw_time")
-            )
-            data = [
-                {
-                    "provider": r.provider.name,
-                    "time": _format_time_12h(r.draw_time),
-                    "number": str(r.animal_number),
-                    "animal": r.animal_name,
-                    "image": r.animal_image_url,
-                }
-                for r in qs
-            ]
+        model = AnimalitoArchive if use_archive else AnimalitoResult
+        qs = (
+            model.objects.select_related("provider")
+            .filter(draw_date=target_date)
+            .order_by("provider__name", "draw_time")
+        )
+        data = [
+            {
+                "provider": r.provider.name,
+                "time": _format_time_12h(r.draw_time),
+                "number": str(r.animal_number),
+                "animal": r.animal_name,
+                "image": r.animal_image_url,
+            }
+            for r in qs
+        ]
 
         DeviceRedisService.set_cache(cache_key, data, ttl_seconds=self.CACHE_TTL)
         return Response(data, status=status.HTTP_200_OK)
@@ -287,22 +249,16 @@ class DeviceRegisterView(APIView):
     def post(self, request):
         device_id = request.data.get("device_id")
         if not device_id:
-            return Response(
-                {"error": "device_id is required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"error": "device_id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         activation_code = self._generate_code()
         ip = get_client_ip(request)
 
-        # OJO IMPORTANTE:
-        # - NO amarramos registered_ip aquí si el device está inactivo
-        #   (así evitas mismatch cuando el device cambia de red antes de activarse).
         device, created = Device.objects.get_or_create(
             device_id=device_id,
             defaults={
                 "activation_code": activation_code,
-                "registered_ip": None,   # <= antes estabas guardando ip aquí
+                "registered_ip": ip,
                 "is_active": False,
             },
         )
@@ -312,13 +268,25 @@ class DeviceRegisterView(APIView):
                 "device_id": device.device_id,
                 "activation_code": device.activation_code,
                 "registered": device.is_active,
-                "ip_detected": ip,  # útil para debug (no rompe clientes existentes)
             },
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
     def _generate_code(self):
         return "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
+
+def get_client_ip(request) -> str:
+    # Nginx suele setear X-Real-IP; Cloudflare / proxies setean X-Forwarded-For
+    x_real_ip = (request.META.get("HTTP_X_REAL_IP") or "").strip()
+    if x_real_ip:
+        return x_real_ip
+
+    xff = request.META.get("HTTP_X_FORWARDED_FOR")
+    if xff:
+        return xff.split(",")[0].strip()
+
+    return (request.META.get("REMOTE_ADDR") or "").strip()
 
 
 class DeviceHeartbeatAPIView(APIView):
@@ -331,16 +299,10 @@ class DeviceHeartbeatAPIView(APIView):
         ip_address = get_client_ip(request)
 
         if not device_id or not activation_code:
-            return Response(
-                {"detail": "Missing credentials"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "Missing credentials"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            DeviceService.validate_device(
-                activation_code=activation_code,
-                ip_address=ip_address,
-            )
+            DeviceService.validate_device(activation_code=activation_code, ip_address=ip_address)
         except PermissionError as e:
             return Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN)
 
@@ -354,20 +316,12 @@ class DeviceStatusAPIView(APIView):
     def get(self, request):
         activation_code = request.query_params.get("code")
         if not activation_code:
-            return Response(
-                {"detail": "Missing activation code"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "Missing activation code"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            device = Device.objects.select_related("branch__client").get(
-                activation_code=activation_code
-            )
+            device = Device.objects.select_related("branch__client").get(activation_code=activation_code)
         except Device.DoesNotExist:
-            return Response(
-                {"detail": "Invalid activation code"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return Response({"detail": "Invalid activation code"}, status=status.HTTP_404_NOT_FOUND)
 
         branch = device.branch
         client = branch.client if branch and getattr(branch, "client_id", None) else None
