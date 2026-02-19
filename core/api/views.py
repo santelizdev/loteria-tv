@@ -26,6 +26,31 @@ from core.services.device_redis_service import DeviceRedisService
 from core.services.device_service import DeviceService
 
 
+# -----------------------------------------------------------------------------
+# Helpers cache-control (CRÍTICO para que NO se quede pegado a las 12pm)
+# -----------------------------------------------------------------------------
+def _apply_no_cache_headers(resp: Response) -> Response:
+    """
+    Fuerza a que Nginx/CDN/Browser NO cacheen el response.
+    Esto ataca el síntoma principal: respuesta vieja sirviéndose por horas.
+    """
+    resp["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp["Pragma"] = "no-cache"
+    resp["Expires"] = "0"
+    return resp
+
+
+def _should_bypass_cache(request) -> bool:
+    """
+    - Si viene ?nocache=1 => bypass inmediato
+    - Si settings.RESULTS_CACHE_TTL_SECONDS == 0 => cache desactivado global
+    """
+    if request.query_params.get("nocache") in ("1", "true", "yes"):
+        return True
+    ttl = getattr(settings, "RESULTS_CACHE_TTL_SECONDS", 0)
+    return int(ttl) <= 0
+
+
 def _format_time_12h(value) -> str:
     return value.strftime("%I:%M %p")
 
@@ -40,14 +65,6 @@ def _parse_date(value: Optional[str]):
 
 
 def _resolve_target_date_for_triples():
-    """
-    Decide qué fecha devolver si NO mandan ?date=
-    Prioridad:
-      1) hoy si hay CurrentResult hoy
-      2) último draw_date en CurrentResult
-      3) último draw_date en ResultArchive
-      4) None
-    """
     today = timezone.localdate()
 
     if CurrentResult.objects.filter(draw_date=today).exists():
@@ -62,14 +79,6 @@ def _resolve_target_date_for_triples():
 
 
 def _resolve_target_date_for_animalitos():
-    """
-    Decide qué fecha devolver si NO mandan ?date=
-    Prioridad:
-      1) hoy si hay AnimalitoResult hoy
-      2) último draw_date en AnimalitoResult
-      3) último draw_date en AnimalitoArchive
-      4) None
-    """
     today = timezone.localdate()
 
     if AnimalitoResult.objects.filter(draw_date=today).exists():
@@ -90,209 +99,161 @@ def get_client_ip(request) -> str:
     return (request.META.get("REMOTE_ADDR") or "").strip()
 
 
-def _cache_get_or_none(key: str):
-    return DeviceRedisService.get_cache(key)
-
-
-def _cache_set_if_enabled(key: str, value, ttl_seconds: int):
-    """
-    Si ttl_seconds <= 0 => no cache
-    """
-    if ttl_seconds and int(ttl_seconds) > 0:
-        DeviceRedisService.set_cache(key, value, ttl_seconds=int(ttl_seconds))
-
-
 class CurrentResultsAPIView(APIView):
     authentication_classes = []
     permission_classes = []
-
-    # Para “tiempo real”: default 3s (override en settings)
-    CACHE_TTL = int(getattr(settings, "RESULTS_CACHE_TTL_SECONDS", 3))
 
     def get(self, request):
         activation_code = request.query_params.get("code")
         ip_address = get_client_ip(request)
 
         if not activation_code:
-            return Response(
-                {"detail": "Missing activation code"},
-                status=status.HTTP_400_BAD_REQUEST,
+            return _apply_no_cache_headers(
+                Response({"detail": "Missing activation code"}, status=status.HTTP_400_BAD_REQUEST)
             )
 
-        # validar device
         try:
-            DeviceService.validate_device(
-                activation_code=activation_code,
-                ip_address=ip_address,
-            )
+            DeviceService.validate_device(activation_code=activation_code, ip_address=ip_address)
         except PermissionError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN)
+            return _apply_no_cache_headers(Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN))
 
-        # fecha
         raw_date = request.query_params.get("date")
         parsed = _parse_date(raw_date)
         if parsed == "INVALID":
-            return Response(
-                {"detail": "Invalid date format. Use YYYY-MM-DD"},
-                status=status.HTTP_400_BAD_REQUEST,
+            return _apply_no_cache_headers(
+                Response({"detail": "Invalid date format. Use YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
             )
 
         target_date = parsed or _resolve_target_date_for_triples()
         if not target_date:
-            return Response([], status=status.HTTP_200_OK)
+            return _apply_no_cache_headers(Response([], status=status.HTTP_200_OK))
 
         today = timezone.localdate()
-        use_archive = (
-            target_date < today
-            and ResultArchive.objects.filter(draw_date=target_date).exists()
-        )
+        use_archive = target_date < today and ResultArchive.objects.filter(draw_date=target_date).exists()
 
-        # bypass cache
-        no_cache = (request.query_params.get("nocache") or "").strip() in ("1", "true", "yes")
-
-        cache_version = "v3"
+        # -------------------------
+        # CACHE (opcional)
+        # -------------------------
+        bypass_cache = _should_bypass_cache(request)
+        ttl = int(getattr(settings, "RESULTS_CACHE_TTL_SECONDS", 0))
+        cache_version = "v4"
         origin = "archive" if use_archive else "current"
         cache_key = f"results:triples:{cache_version}:{origin}:{target_date.isoformat()}"
 
-        if not no_cache:
-            cached = _cache_get_or_none(cache_key)
+        if not bypass_cache and ttl > 0:
+            cached = DeviceRedisService.get_cache(cache_key)
             if cached is not None:
-                resp = Response(cached, status=status.HTTP_200_OK)
-                resp["Cache-Control"] = "no-store"
-                return resp
+                return _apply_no_cache_headers(Response(cached, status=status.HTTP_200_OK))
 
+        # -------------------------
+        # Query DB
+        # -------------------------
         if use_archive:
             qs = (
                 ResultArchive.objects.select_related("provider")
                 .filter(draw_date=target_date, provider__is_active=True)
                 .order_by("provider__name", "draw_time")
             )
-            data = [
-                {
-                    "provider": r.provider.name,
-                    "time": _format_time_12h(r.draw_time),
-                    "number": r.winning_number,
-                    "image": r.image_url or "",
-                }
-                for r in qs
-            ]
         else:
             qs = (
                 CurrentResult.objects.select_related("provider")
                 .filter(draw_date=target_date, provider__is_active=True)
                 .order_by("provider__name", "draw_time")
             )
-            data = [
-                {
-                    "provider": r.provider.name,
-                    "time": _format_time_12h(r.draw_time),
-                    "number": r.winning_number,
-                    "image": r.image_url or "",
-                }
-                for r in qs
-            ]
 
-        _cache_set_if_enabled(cache_key, data, ttl_seconds=self.CACHE_TTL)
+        data = [
+            {
+                "provider": r.provider.name,
+                "time": _format_time_12h(r.draw_time),
+                "number": r.winning_number,
+                "image": r.image_url or "",
+            }
+            for r in qs
+        ]
 
-        resp = Response(data, status=status.HTTP_200_OK)
-        resp["Cache-Control"] = "no-store"
-        return resp
+        if not bypass_cache and ttl > 0:
+            DeviceRedisService.set_cache(cache_key, data, ttl_seconds=ttl)
+
+        return _apply_no_cache_headers(Response(data, status=status.HTTP_200_OK))
 
 
 class AnimalitosResultsAPIView(APIView):
     authentication_classes = []
     permission_classes = []
 
-    CACHE_TTL = int(getattr(settings, "RESULTS_CACHE_TTL_SECONDS", 3))
-
     def get(self, request):
         activation_code = request.query_params.get("code")
         ip_address = get_client_ip(request)
 
         if not activation_code:
-            return Response(
-                {"detail": "Missing activation code"},
-                status=status.HTTP_400_BAD_REQUEST,
+            return _apply_no_cache_headers(
+                Response({"detail": "Missing activation code"}, status=status.HTTP_400_BAD_REQUEST)
             )
 
-        # validar device
         try:
-            DeviceService.validate_device(
-                activation_code=activation_code,
-                ip_address=ip_address,
-            )
+            DeviceService.validate_device(activation_code=activation_code, ip_address=ip_address)
         except PermissionError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN)
+            return _apply_no_cache_headers(Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN))
 
         raw_date = request.query_params.get("date")
         parsed = _parse_date(raw_date)
         if parsed == "INVALID":
-            return Response(
-                {"detail": "Invalid date format. Use YYYY-MM-DD"},
-                status=status.HTTP_400_BAD_REQUEST,
+            return _apply_no_cache_headers(
+                Response({"detail": "Invalid date format. Use YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
             )
 
         target_date = parsed or _resolve_target_date_for_animalitos()
         if not target_date:
-            return Response([], status=status.HTTP_200_OK)
+            return _apply_no_cache_headers(Response([], status=status.HTTP_200_OK))
 
         today = timezone.localdate()
-        use_archive = (
-            target_date < today
-            and AnimalitoArchive.objects.filter(draw_date=target_date).exists()
-        )
+        use_archive = target_date < today and AnimalitoArchive.objects.filter(draw_date=target_date).exists()
 
-        no_cache = (request.query_params.get("nocache") or "").strip() in ("1", "true", "yes")
-
+        # -------------------------
+        # CACHE (opcional)
+        # -------------------------
+        bypass_cache = _should_bypass_cache(request)
+        ttl = int(getattr(settings, "RESULTS_CACHE_TTL_SECONDS", 0))
         cache_version = "v4"
         origin = "archive" if use_archive else "current"
         cache_key = f"results:animalitos:{cache_version}:{origin}:{target_date.isoformat()}"
 
-        if not no_cache:
-            cached = _cache_get_or_none(cache_key)
+        if not bypass_cache and ttl > 0:
+            cached = DeviceRedisService.get_cache(cache_key)
             if cached is not None:
-                resp = Response(cached, status=status.HTTP_200_OK)
-                resp["Cache-Control"] = "no-store"
-                return resp
+                return _apply_no_cache_headers(Response(cached, status=status.HTTP_200_OK))
 
+        # -------------------------
+        # Query DB
+        # -------------------------
         if use_archive:
             qs = (
                 AnimalitoArchive.objects.select_related("provider")
-                .filter(draw_date=target_date, provider__is_active=True)
+                .filter(draw_date=target_date)
                 .order_by("provider__name", "draw_time")
             )
-            data = [
-                {
-                    "provider": r.provider.name,
-                    "time": _format_time_12h(r.draw_time),
-                    "number": str(r.animal_number),
-                    "animal": r.animal_name,
-                    "image": r.animal_image_url,
-                }
-                for r in qs
-            ]
         else:
             qs = (
                 AnimalitoResult.objects.select_related("provider")
-                .filter(draw_date=target_date, provider__is_active=True)
+                .filter(draw_date=target_date)
                 .order_by("provider__name", "draw_time")
             )
-            data = [
-                {
-                    "provider": r.provider.name,
-                    "time": _format_time_12h(r.draw_time),
-                    "number": str(r.animal_number),
-                    "animal": r.animal_name,
-                    "image": r.animal_image_url,
-                }
-                for r in qs
-            ]
 
-        _cache_set_if_enabled(cache_key, data, ttl_seconds=self.CACHE_TTL)
+        data = [
+            {
+                "provider": r.provider.name,
+                "time": _format_time_12h(r.draw_time),
+                "number": str(r.animal_number),
+                "animal": r.animal_name,
+                "image": r.animal_image_url,
+            }
+            for r in qs
+        ]
 
-        resp = Response(data, status=status.HTTP_200_OK)
-        resp["Cache-Control"] = "no-store"
-        return resp
+        if not bypass_cache and ttl > 0:
+            DeviceRedisService.set_cache(cache_key, data, ttl_seconds=ttl)
+
+        return _apply_no_cache_headers(Response(data, status=status.HTTP_200_OK))
 
 
 class DeviceRegisterView(APIView):
@@ -302,9 +263,8 @@ class DeviceRegisterView(APIView):
     def post(self, request):
         device_id = request.data.get("device_id")
         if not device_id:
-            return Response(
-                {"error": "device_id is required"},
-                status=status.HTTP_400_BAD_REQUEST,
+            return _apply_no_cache_headers(
+                Response({"error": "device_id is required"}, status=status.HTTP_400_BAD_REQUEST)
             )
 
         activation_code = self._generate_code()
@@ -319,13 +279,15 @@ class DeviceRegisterView(APIView):
             },
         )
 
-        return Response(
-            {
-                "device_id": device.device_id,
-                "activation_code": device.activation_code,
-                "registered": device.is_active,
-            },
-            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        return _apply_no_cache_headers(
+            Response(
+                {
+                    "device_id": device.device_id,
+                    "activation_code": device.activation_code,
+                    "registered": device.is_active,
+                },
+                status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+            )
         )
 
     def _generate_code(self):
@@ -342,17 +304,16 @@ class DeviceHeartbeatAPIView(APIView):
         ip_address = get_client_ip(request)
 
         if not device_id or not activation_code:
-            return Response(
-                {"detail": "Missing credentials"},
-                status=status.HTTP_400_BAD_REQUEST,
+            return _apply_no_cache_headers(
+                Response({"detail": "Missing credentials"}, status=status.HTTP_400_BAD_REQUEST)
             )
 
         try:
             DeviceService.validate_device(activation_code=activation_code, ip_address=ip_address)
         except PermissionError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN)
+            return _apply_no_cache_headers(Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN))
 
-        return Response({"status": "ok", "online": True}, status=status.HTTP_200_OK)
+        return _apply_no_cache_headers(Response({"status": "ok", "online": True}, status=status.HTTP_200_OK))
 
 
 class DeviceStatusAPIView(APIView):
@@ -362,17 +323,14 @@ class DeviceStatusAPIView(APIView):
     def get(self, request):
         activation_code = request.query_params.get("code")
         if not activation_code:
-            return Response(
-                {"detail": "Missing activation code"},
-                status=status.HTTP_400_BAD_REQUEST,
+            return _apply_no_cache_headers(
+                Response({"detail": "Missing activation code"}, status=status.HTTP_400_BAD_REQUEST)
             )
 
         try:
-            device = Device.objects.select_related("branch__client").get(
-                activation_code=activation_code
-            )
+            device = Device.objects.select_related("branch__client").get(activation_code=activation_code)
         except Device.DoesNotExist:
-            return Response({"detail": "Invalid activation code"}, status=status.HTTP_404_NOT_FOUND)
+            return _apply_no_cache_headers(Response({"detail": "Invalid activation code"}, status=status.HTTP_404_NOT_FOUND))
 
         branch = device.branch
         client = branch.client if branch and getattr(branch, "client_id", None) else None
@@ -381,11 +339,13 @@ class DeviceStatusAPIView(APIView):
         if client and getattr(client, "logo_url", None):
             client_logo_url = client.logo_url or ""
 
-        return Response(
-            {
-                "is_active": bool(device.is_active and device.branch_id),
-                "branch_id": device.branch_id,
-                "client_logo_url": client_logo_url,
-            },
-            status=status.HTTP_200_OK,
+        return _apply_no_cache_headers(
+            Response(
+                {
+                    "is_active": bool(device.is_active and device.branch_id),
+                    "branch_id": device.branch_id,
+                    "client_logo_url": client_logo_url,
+                },
+                status=status.HTTP_200_OK,
+            )
         )

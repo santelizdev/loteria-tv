@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 USE_X_FORWARDED_HOST = True
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
-RESULTS_CACHE_TTL_SECONDS = 3  # 0 para desactivar cache totalmente
+RESULTS_CACHE_TTL_SECONDS = 0  # 0 para desactivar cache totalmente
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
