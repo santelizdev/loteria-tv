@@ -271,14 +271,32 @@ function getApiBase() {
   return window.__APP_CONFIG__?.API_BASE || "https://api.ssganador.lat";
 }
 
+const BUSINESS_TZ = "America/Caracas"; // o "America/Santiago" si tu regla fuese Chile
+
 function getDateISO(offset) {
-  const d = new Date();
-  d.setDate(d.getDate() + offset);
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+  const now = new Date();
+  // Convertimos 'now' al "día calendario" en la zona BUSINESS_TZ
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: BUSINESS_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+
+  const yyyy = parts.find(p => p.type === "year").value;
+  const mm   = parts.find(p => p.type === "month").value;
+  const dd   = parts.find(p => p.type === "day").value;
+
+  // date base en la TZ negocio (sin horas)
+  const base = new Date(`${yyyy}-${mm}-${dd}T00:00:00`);
+
+  base.setDate(base.getDate() + offset);
+  const y = base.getFullYear();
+  const m = String(base.getMonth() + 1).padStart(2, "0");
+  const d = String(base.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
+
 
 async function fetchAnimalitosByDate(dateISO) {
   const code = deviceManager.activationCode || localStorage.getItem("activation_code") || "DEV";
