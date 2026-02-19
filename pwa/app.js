@@ -400,14 +400,16 @@ window.addEventListener("deviceActivated", async () => {
   renderDeviceCode(deviceManager.activationCode);
 
   // SHOW COD-ACTIVACION IN HTML
-  function renderDeviceCode(code) {
-    const el = document.getElementById("deviceCode");
-    if (el) el.textContent = code ? String(code).toUpperCase() : "----";
-  }
+function renderDeviceCode(code) {
+  const el = document.getElementById("deviceCode");
+  if (el) el.textContent = code ? String(code).toUpperCase() : "----";
+}
 
-  // 1) ensure code SOLO UNA VEZ
-  const code = await deviceManager.ensureActivationCode();
-  renderDeviceCode(code);
+// pinta lo que haya YA (URL o localStorage)
+renderDeviceCode(localStorage.getItem("activation_code") || new URL(location.href).searchParams.get("code"));
+
+const code = await deviceManager.ensureActivationCode();
+renderDeviceCode(code);
 
   // 2) WS + fallback status + primera carga
   deviceManager.connectSocket();
