@@ -1,65 +1,31 @@
-<!-- pwa/index.html -->
 <!doctype html>
 <html lang="es">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-    <title>Lotería TV</title>
-    <link rel="icon" href="/favicon.ico">
-    <link rel="stylesheet" href="./src/styles.css" />
-  </head>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Lotería TV</title>
+  <link rel="stylesheet" href="./src/styles.css" />
+</head>
+  <div id="app">
 
-  <body>
-    <div id="app" class="app">
+    <!-- Header principal -->
+   <header class="topbar">
+      <div class="live-badge">EN VIVO</div>
+         <div id="vzClock" class="clock"></div>
+      <div id="resultsTitle" class="results-title">RESULTADOS HOY</div>
+  </header>
 
-      <header class="topbar">
-        <!-- Izquierda -->
-        <div class="topbar__left">
-          <div id="resultsTitle" class="title-badge">RESULTADOS HOY</div>
-        </div>
+    <!-- Contenedor principal -->
+    <main>
+      <div id="grid" class="results-grid"></div>
+    </main>
 
-        <!-- Centro -->
-        <div class="topbar__center">
-          <div class="live">
-            <div class="device-code">
-              COD: <span id="deviceCode">${esc(state.deviceCode)}</span>
-            </div>
-            <span class="live__dot" aria-hidden="true"></span>
-            <span class="live__text">EN VIVO</span>
-          </div>
-
-          <img
-            id="clientLogo"
-            class="client-logo"
-            alt="Logo del cliente"
-            loading="eager"
-            decoding="async"
-          />
-        </div>
-
-        <!-- Derecha -->
-        <div class="topbar__right">
-          <div class="timebox">
-            <span class="timebox__label">HORA</span>
-            <span id="vzClock" class="timebox__value">--:-- --</span>
-          </div>
-        </div>
-      </header>
-
-      <main class="main">
-        <div id="grid" class="results-grid"></div>
-      </main>
-
-      <footer class="footer">
-        <div class="progress-track">
-          <div id="progressBar" class="progress-bar"></div>
-        </div>
-      </footer>
-
+    <!-- Barra de progreso inferior -->
+    <div class="progress-container">
+      <div id="progressBar" class="progress-bar"></div>
     </div>
 
-    <!-- config FIRST -->
-    <script src="./config.js"></script>
-    <script type="module" src="./app.js"></script>
-  </body>
+  </div>
+  <script type="module" src="./app.js?v=20260219"></script>
+</body>
 </html>
