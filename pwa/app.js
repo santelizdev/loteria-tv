@@ -1,6 +1,7 @@
 // ============================================
 // File: pwa/app.js
-// Renders into: #grid, #resultsTitle, #vzClock, #progressBar
+// FIX v2: timeToHourSlot ahora parsea tanto "HH:MM" (24h) como "HH:MM AM/PM" (12h)
+//         para que resultados PM no sean descartados silenciosamente.
 // ============================================
 
 import DeviceManager from "./deviceManager.js";
@@ -8,11 +9,11 @@ import DeviceManager from "./deviceManager.js";
 const DEVICE_ID = "TV_TEST_001";
 
 // Rotación
-const ROTATION_MS = 20_000; // cambio de página/grupo
-const ANIMALITOS_REFRESH_MS = 60_000; // refrescar cache hoy
-const ANIMALITOS_INTERVAL_MS = 15_000; // alterna HOY/AYER
+const ROTATION_MS = 20_000;
+const ANIMALITOS_REFRESH_MS = 60_000;
+const ANIMALITOS_INTERVAL_MS = 15_000;
 
-// Slots 08:00-20:00
+// Slots internos siempre en 24h "HH:00" — solo para lógica, nunca se muestran directamente
 const SLOTS = (() => {
   const out = [];
   for (let h = 8; h <= 20; h++) out.push(`${String(h).padStart(2, "0")}:00`);
@@ -22,21 +23,16 @@ const SLOTS = (() => {
 const deviceManager = new DeviceManager(DEVICE_ID);
 
 // DOM
-const gridEl = document.getElementById("grid");
-const titleEl = document.getElementById("resultsTitle");
-const clockEl = document.getElementById("vzClock");
+const gridEl    = document.getElementById("grid");
+const titleEl   = document.getElementById("resultsTitle");
+const clockEl   = document.getElementById("vzClock");
 const progressEl = document.getElementById("progressBar");
-
-const logoEl = document.getElementById("clientLogo");
+const logoEl    = document.getElementById("clientLogo");
 
 function setClientLogo(src) {
   if (!logoEl) return;
   const url = String(src || "").trim();
-  if (!url) {
-    logoEl.style.display = "none";
-    logoEl.removeAttribute("src");
-    return;
-  }
+  if (!url) { logoEl.style.display = "none"; logoEl.removeAttribute("src"); return; }
   logoEl.src = url;
   logoEl.style.display = "block";
 }
@@ -50,6 +46,7 @@ function esc(v) {
     .replaceAll("'", "&#039;");
 }
 
+// Convierte slot interno "HH:00" (24h) a display "HH:MM AM/PM"
 function slotTo12h(hhmm) {
   const [hh, mm] = String(hhmm || "").split(":");
   const h = Number(hh);
@@ -60,8 +57,37 @@ function slotTo12h(hhmm) {
   return `${String(h12).padStart(2, "0")}:${String(m).padStart(2, "0")} ${ampm}`;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX CRÍTICO: timeToHourSlot
+//
+// ANTES (roto): asumía que timeStr siempre era "HH:MM" (24h).
+//   "07:15 PM" → split(":")[0] → "07" → 7 < 8 → null → DESCARTADO
+//   "01:00 PM" → "01" → 1 < 8 → null → DESCARTADO
+//
+// AHORA (correcto): detecta formato 12h y convierte a 24h antes de evaluar.
+//   "07:15 PM" → 19 → slot "19:00" ✓
+//   "01:00 PM" → 13 → slot "13:00" ✓
+//   "12:00 PM" → 12 → slot "12:00" ✓
+//   "08:00 AM" →  8 → slot "08:00" ✓
+//   "13:00"    → 13 → slot "13:00" ✓  (formato 24h también soportado)
+// ─────────────────────────────────────────────────────────────────────────────
 function timeToHourSlot(timeStr) {
-  const s = String(timeStr || "");
+  const s = String(timeStr || "").trim();
+  if (!s) return null;
+
+  // Detectar si viene en formato 12h: "HH:MM AM" o "HH:MM PM"
+  const match12 = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (match12) {
+    let h = Number(match12[1]);
+    const meridiem = match12[3].toUpperCase();
+    // Conversión estándar 12h → 24h
+    if (meridiem === "AM" && h === 12) h = 0;
+    if (meridiem === "PM" && h !== 12) h += 12;
+    if (h < 8 || h > 20) return null;
+    return `${String(h).padStart(2, "0")}:00`;
+  }
+
+  // Formato 24h: "HH:MM" o "HH:MM:SS"
   const hh = Number(s.split(":")[0]);
   if (Number.isNaN(hh)) return null;
   if (hh < 8 || hh > 20) return null;
@@ -90,10 +116,7 @@ function startClock() {
     const s = d.getSeconds();
     const ampm = h >= 12 ? "PM" : "AM";
     const h12 = ((h + 11) % 12) + 1;
-    clockEl.textContent = `${String(h12).padStart(2, "0")}:${String(m).padStart(
-      2,
-      "0"
-    )}:${String(s).padStart(2, "0")} ${ampm}`;
+    clockEl.textContent = `${String(h12).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")} ${ampm}`;
   };
   tick();
   setInterval(tick, 1000);
@@ -137,8 +160,6 @@ function normalizeAnimalitos(raw) {
   for (const r of raw || []) {
     const slot = timeToHourSlot(r.time);
     if (!slot) continue;
-
-    // tu API devuelve animalitos con animal/image, pero algunos providers (tipo La Ruca) no traen animal.
     out.push({
       provider: r.provider,
       time: slot,
@@ -166,9 +187,13 @@ function mapRowsByProvider(rows, provider) {
 }
 
 // ---------- RENDER ----------
+function renderDeviceCode(code) {
+  const el = document.getElementById("deviceCode");
+  if (el) el.textContent = code ? String(code).toUpperCase() : "----";
+}
+
 function renderTriplesPage() {
   if (!gridEl) return;
-
   if (titleEl) titleEl.textContent = "RESULTADOS HOY (TRIPLES)";
 
   const providers = state.triplesProviders;
@@ -181,36 +206,32 @@ function renderTriplesPage() {
   const group = groups[state.pageIndex] || groups[0];
   if (!group) return;
 
-  const html = group
-    .map((p) => {
-      const byTime = mapRowsByProvider(state.triplesRows, p);
-      const rowsHtml = SLOTS.map((t) => {
-        const rec = byTime.get(t);
-        return `
-          <div class="col__row">
-            <div class="col__time">${esc(slotTo12h(t))}</div>
-            <div class="col__num">${rec?.number ? esc(rec.number) : `<span class="col__empty">…</span>`}</div>
-          </div>
-        `;
-      }).join("");
-
+  const html = group.map((p) => {
+    const byTime = mapRowsByProvider(state.triplesRows, p);
+    const rowsHtml = SLOTS.map((t) => {
+      const rec = byTime.get(t);
       return `
-        <article class="col">
-          <div class="col__head"><div class="col__title">${esc(p)}</div></div>
-          <div class="col__body">${rowsHtml}</div>
-        </article>
+        <div class="col__row">
+          <div class="col__time">${esc(slotTo12h(t))}</div>
+          <div class="col__num">${rec?.number ? esc(rec.number) : `<span class="col__empty">…</span>`}</div>
+        </div>
       `;
-    })
-    .join("");
+    }).join("");
+
+    return `
+      <article class="col">
+        <div class="col__head"><div class="col__title">${esc(p)}</div></div>
+        <div class="col__body">${rowsHtml}</div>
+      </article>
+    `;
+  }).join("");
 
   gridEl.innerHTML = html;
 }
 
 function renderAnimalitosGroup(day) {
   if (!gridEl) return;
-
   const rows = day === "today" ? state.animalitosTodayRows : state.animalitosYesterdayRows;
-
   if (titleEl) titleEl.textContent = day === "today" ? "RESULTADOS HOY (ANIMALITOS)" : "RESULTADOS AYER (ANIMALITOS)";
 
   const providers = state.animalitosProviders;
@@ -223,35 +244,32 @@ function renderAnimalitosGroup(day) {
   const group = groups[state.animalitosGroupIndex] || groups[0];
   if (!group) return;
 
-  const html = group
-    .map((p) => {
-      const byTime = mapRowsByProvider(rows, p);
-      const rowsHtml = SLOTS.map((t) => {
-        const rec = byTime.get(t);
-        const img = rec?.image ? `<img class="col__icon" src="${esc(rec.image)}" alt="" loading="lazy" />` : "";
-        const animal = rec?.animal ? esc(rec.animal) : `<span class="col__empty">…</span>`;
-        const num = rec?.number ? esc(rec.number) : `<span class="col__empty">…</span>`;
-
-        return `
-          <div class="col__row col__row--animal">
-            <div class="col__time">${esc(slotTo12h(t))}</div>
-            <div class="col__num col__num--animal">${num}</div>
-            <div class="col__nameWrap">
-              <div class="col__name">${animal}</div>
-              ${img}
-            </div>
-          </div>
-        `;
-      }).join("");
-
+  const html = group.map((p) => {
+    const byTime = mapRowsByProvider(rows, p);
+    const rowsHtml = SLOTS.map((t) => {
+      const rec = byTime.get(t);
+      const img    = rec?.image  ? `<img class="col__icon" src="${esc(rec.image)}" alt="" loading="lazy" />` : "";
+      const animal = rec?.animal ? esc(rec.animal) : `<span class="col__empty">…</span>`;
+      const num    = rec?.number ? esc(rec.number) : `<span class="col__empty">…</span>`;
       return `
-        <article class="col">
-          <div class="col__head"><div class="col__title">${esc(p)}</div></div>
-          <div class="col__body">${rowsHtml}</div>
-        </article>
+        <div class="col__row col__row--animal">
+          <div class="col__time">${esc(slotTo12h(t))}</div>
+          <div class="col__num col__num--animal">${num}</div>
+          <div class="col__nameWrap">
+            <div class="col__name">${animal}</div>
+            ${img}
+          </div>
+        </div>
       `;
-    })
-    .join("");
+    }).join("");
+
+    return `
+      <article class="col">
+        <div class="col__head"><div class="col__title">${esc(p)}</div></div>
+        <div class="col__body">${rowsHtml}</div>
+      </article>
+    `;
+  }).join("");
 
   gridEl.innerHTML = html;
 }
@@ -261,30 +279,23 @@ function render() {
   else renderAnimalitosGroup(state.animalitosDay);
 }
 
-// ---------- DATA FETCH (ANIMALITOS) ----------
+// ---------- DATA FETCH ----------
 function getApiBase() {
   return window.__APP_CONFIG__?.API_BASE || "https://api.ssganador.lat";
 }
 
-const BUSINESS_TZ = "America/Caracas"; // o "America/Santiago" si tu regla fuese Chile
+const BUSINESS_TZ = "America/Caracas";
 
 function getDateISO(offset) {
   const now = new Date();
-  // Convertimos 'now' al "día calendario" en la zona BUSINESS_TZ
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: BUSINESS_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
+    year: "numeric", month: "2-digit", day: "2-digit",
   }).formatToParts(now);
-
   const yyyy = parts.find(p => p.type === "year").value;
   const mm   = parts.find(p => p.type === "month").value;
   const dd   = parts.find(p => p.type === "day").value;
-
-  // date base en la TZ negocio (sin horas)
   const base = new Date(`${yyyy}-${mm}-${dd}T00:00:00`);
-
   base.setDate(base.getDate() + offset);
   const y = base.getFullYear();
   const m = String(base.getMonth() + 1).padStart(2, "0");
@@ -292,32 +303,23 @@ function getDateISO(offset) {
   return `${y}-${m}-${d}`;
 }
 
-
 async function fetchAnimalitosByDate(dateISO) {
   const code = deviceManager.activationCode || localStorage.getItem("activation_code") || "DEV";
-  const api = getApiBase();
-  const url = `${api}/api/animalitos/?code=${encodeURIComponent(code)}&date=${encodeURIComponent(dateISO)}`;
-  const res = await fetch(url, { cache: "no-store" });
+  const api  = getApiBase();
+  const url  = `${api}/api/animalitos/?code=${encodeURIComponent(code)}&date=${encodeURIComponent(dateISO)}`;
+  const res  = await fetch(url, { cache: "no-store" });
   if (!res.ok) return [];
-  const payload = await res.json();
-  return normalizeAnimalitos(payload);
+  return normalizeAnimalitos(await res.json());
 }
 
 async function refreshAnimalitosCaches() {
-  const todayISO = getDateISO(0);
-  const yISO = getDateISO(-1);
-
   const [todayRows, yRows] = await Promise.all([
-    fetchAnimalitosByDate(todayISO),
-    fetchAnimalitosByDate(yISO),
+    fetchAnimalitosByDate(getDateISO(0)),
+    fetchAnimalitosByDate(getDateISO(-1)),
   ]);
-
-  state.animalitosTodayRows = todayRows;
+  state.animalitosTodayRows     = todayRows;
   state.animalitosYesterdayRows = yRows;
-
-  // Providers list: usa la unión de ambos días para no “encoger” grupos
-  const providers = computeProviders([...todayRows, ...yRows]);
-  state.animalitosProviders = providers;
+  state.animalitosProviders     = computeProviders([...todayRows, ...yRows]);
 }
 
 // ---------- ROTATION ----------
@@ -332,10 +334,7 @@ function startRotation(durationMs) {
   stopRotation();
   tickStart = Date.now();
 
-  const raf = () => {
-    setProgress(tickStart, durationMs);
-    rafTimer = requestAnimationFrame(raf);
-  };
+  const raf = () => { setProgress(tickStart, durationMs); rafTimer = requestAnimationFrame(raf); };
   rafTimer = requestAnimationFrame(raf);
 
   rotationTimer = setInterval(() => {
@@ -344,9 +343,7 @@ function startRotation(durationMs) {
     if (state.mode === "triples") {
       const groups = chunk(state.triplesProviders, 4);
       state.pageIndex += 1;
-
       if (state.pageIndex >= groups.length) {
-        // cambia a animalitos
         state.mode = "animalitos";
         state.pageIndex = 0;
         state.animalitosDay = "today";
@@ -355,12 +352,10 @@ function startRotation(durationMs) {
         startRotation(ANIMALITOS_INTERVAL_MS);
         return;
       }
-
       render();
       return;
     }
 
-    // animalitos: alterna HOY/AYER y avanza grupo cada ciclo completo
     if (state.animalitosDay === "today") {
       state.animalitosDay = "yesterday";
     } else {
@@ -368,7 +363,6 @@ function startRotation(durationMs) {
       const groups = chunk(state.animalitosProviders, 4);
       state.animalitosGroupIndex = (state.animalitosGroupIndex + 1) % Math.max(1, groups.length);
     }
-
     render();
   }, durationMs);
 }
@@ -376,15 +370,12 @@ function startRotation(durationMs) {
 // ---------- EVENTS ----------
 window.addEventListener("resultsUpdated", (e) => {
   const raw = Array.isArray(e.detail) ? e.detail : [];
-  state.triplesRows = normalizeTriples(raw);
+  state.triplesRows     = normalizeTriples(raw);
   state.triplesProviders = computeProviders(state.triplesRows);
-
-  // primer render inmediato si estamos en triples
   if (state.mode === "triples") render();
 });
 
 window.addEventListener("deviceActivated", async () => {
-  // en tu alpha local, esto puede que no se dispare; igual hacemos refresh por boot
   await refreshAnimalitosCaches();
 });
 
@@ -392,27 +383,18 @@ window.addEventListener("deviceActivated", async () => {
 (async () => {
   startClock();
 
-  renderDeviceCode(deviceManager.activationCode);
+  // Mostrar código desde URL/localStorage de inmediato
+  renderDeviceCode(
+    localStorage.getItem("activation_code") ||
+    new URL(location.href).searchParams.get("code")
+  );
 
-  // SHOW COD-ACTIVACION IN HTML
-function renderDeviceCode(code) {
-  const el = document.getElementById("deviceCode");
-  if (el) el.textContent = code ? String(code).toUpperCase() : "----";
-}
+  const code = await deviceManager.ensureActivationCode();
+  state.deviceCode = String(code || "----").toUpperCase();
+  renderDeviceCode(state.deviceCode);
 
-// pinta lo que haya YA (URL o localStorage)
-renderDeviceCode(localStorage.getItem("activation_code") || new URL(location.href).searchParams.get("code"));
+  render();
 
-const code = await deviceManager.ensureActivationCode();
-state.deviceCode = String(code || "----").toUpperCase();
-
-const el = document.getElementById("deviceCode");
-if (el) el.textContent = state.deviceCode;
-
-render(); // importante: render después de setear state.deviceCode
-
-
-  // 2) WS + fallback status + primera carga
   deviceManager.connectSocket();
   await deviceManager.syncStatusOnce();
   await deviceManager.fetchResultsOnce();
@@ -422,12 +404,9 @@ render(); // importante: render después de setear state.deviceCode
 
   setClientLogo(window.__APP_CONFIG__?.CLIENT_LOGO || "");
 
-  // Render inicial
   render();
   startRotation(ROTATION_MS);
 })().catch((e) => {
   console.error("BOOT ERROR:", e);
   if (gridEl) gridEl.innerHTML = `<div style="padding:16px;">Error: ${esc(e.message || e)}</div>`;
 });
-
-import DeviceManager from "./deviceManager.js";
