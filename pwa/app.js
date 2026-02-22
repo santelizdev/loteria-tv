@@ -10,8 +10,8 @@ const DEVICE_ID = "TV_TEST_001";
 
 // Rotación
 const ROTATION_MS = 20000;
-const ANIMALITOS_REFRESH_MS = 60_000;
-const ANIMALITOS_INTERVAL_MS = 15_000;
+const ANIMALITOS_REFRESH_MS = 60000;
+const ANIMALITOS_INTERVAL_MS = 15000;
 
 // Slots internos siempre en 24h "HH:00" — solo para lógica, nunca se muestran directamente
 const SLOTS = (() => {
