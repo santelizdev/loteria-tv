@@ -9,7 +9,7 @@ import DeviceManager from "./deviceManager.js";
 const DEVICE_ID = "TV_TEST_001";
 
 // Rotación
-const ROTATION_MS = 20_000;
+const ROTATION_MS = 20000;
 const ANIMALITOS_REFRESH_MS = 60_000;
 const ANIMALITOS_INTERVAL_MS = 15_000;
 
