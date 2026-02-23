@@ -423,6 +423,7 @@ window.addEventListener("deviceActivated", async () => {
 
   // pedir contexto (logo) asociado al code/branch
  const ctx = await deviceManager.fetchContextOnce();
+ setClientLogo(ctx?.client_logo_url || "");
 
 const logoUrl =
   (ctx && ctx.client_logo_url) ||
