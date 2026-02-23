@@ -32,15 +32,17 @@ function setClientLogo(url) {
   const img = document.getElementById("clientLogo");
   if (!img) return;
 
-  if (!url || !(url.startsWith("http://") || url.startsWith("https://"))) {
+  const isAbsolute = typeof url === "string" && /^https?:\/\//i.test(url);
+
+  if (!isAbsolute) {
     img.removeAttribute("src");
     img.style.display = "none";
     console.log("Logo oculto. URL inválida:", url);
     return;
   }
 
-  img.onerror = () => console.log("Logo load error:", url);
-  img.onload = () => console.log("Logo loaded:", url);
+  img.onerror = () => console.log("Logo ERROR:", url);
+  img.onload = () => console.log("Logo OK:", url);
 
   img.src = url;
   img.style.display = "block";
@@ -420,15 +422,14 @@ window.addEventListener("deviceActivated", async () => {
   await deviceManager.syncStatusOnce();
 
   // pedir contexto (logo) asociado al code/branch
-  const ctx = await deviceManager.fetchContextOnce(); // (lo agregamos abajo)
-  console.log("LOGO ctx:", ctx);
-  console.log("LOGO url:", ctx?.client_logo_url);
-  setClientLogo(ctx?.client_logo_url || "");
-// si no está activo, no buscar resultados y mostrar pantalla de activación
-  if (!deviceManager.isActive) {
-    renderWaitingForActivation(); // función nueva (abajo)
-    return;
-  }
+ const ctx = await deviceManager.fetchContextOnce();
+
+const logoUrl =
+  (ctx && ctx.client_logo_url) ||
+  (window.__APP_CONFIG__ && window.__APP_CONFIG__.CLIENT_LOGO) ||
+  "";
+
+setClientLogo(logoUrl);
 
   await deviceManager.fetchResultsOnce();
 
