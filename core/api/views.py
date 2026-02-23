@@ -330,12 +330,11 @@ class DeviceStatusAPIView(APIView):
         try:
             device = Device.objects.select_related("branch__client").get(activation_code=activation_code)
         except Device.DoesNotExist:
-            return _apply_no_cache_headers(Response({"detail": "Invalid activation code"}, status=status.HTTP_404_NOT_FOUND))
+            return _apply_no_cache_headers(
+                Response({"detail": "Invalid activation code"}, status=status.HTTP_404_NOT_FOUND)
+            )
 
-        branch = device.branch
-        client = branch.client if branch and getattr(branch, "client_id", None) else None
-
-
+        # ✅ DEFINE client_logo_url ANTES DEL RETURN
         client_logo_url = ""
         if device.branch and device.branch.client and device.branch.client.logo:
             try:
@@ -343,8 +342,9 @@ class DeviceStatusAPIView(APIView):
             except Exception:
                 client_logo_url = ""
 
-        return Response({
+        # ✅ DEVUELVE usando la variable ya definida
+        return _apply_no_cache_headers(Response({
             "is_active": bool(device.is_active and device.branch_id),
             "branch_id": device.branch_id,
             "client_logo_url": client_logo_url,
-        })
+        }))
