@@ -335,17 +335,16 @@ class DeviceStatusAPIView(APIView):
         branch = device.branch
         client = branch.client if branch and getattr(branch, "client_id", None) else None
 
-        client_logo_url = ""
-        if client and getattr(client, "logo_url", None):
-            client_logo_url = client.logo_url or ""
 
-        return _apply_no_cache_headers(
-            Response(
-                {
-                    "is_active": bool(device.is_active and device.branch_id),
-                    "branch_id": device.branch_id,
-                    "client_logo_url": client_logo_url,
-                },
-                status=status.HTTP_200_OK,
-            )
-        )
+        client_logo_url = ""
+        if device.branch and device.branch.client and device.branch.client.logo:
+            try:
+                client_logo_url = request.build_absolute_uri(device.branch.client.logo.url)
+            except Exception:
+                client_logo_url = ""
+
+        return Response({
+            "is_active": bool(device.is_active and device.branch_id),
+            "branch_id": device.branch_id,
+            "client_logo_url": client_logo_url,
+        })
