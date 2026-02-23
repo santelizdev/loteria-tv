@@ -6,7 +6,6 @@
 
 import DeviceManager from "./deviceManager.js";
 
-const DEVICE_ID = "TV_TEST_001";
 
 // Rotación
 const ROTATION_MS = 20000;
@@ -191,7 +190,19 @@ function renderDeviceCode(code) {
   const el = document.getElementById("deviceCode");
   if (el) el.textContent = code ? String(code).toUpperCase() : "----";
 }
-
+function renderWaitingForActivation() {
+  if (!gridEl) return;
+  gridEl.innerHTML = `
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;gap:12px;">
+      <div style="font-size:22px;font-weight:700;">ACTIVAR TV</div>
+      <div style="opacity:.9;">Ingresa este código en el panel para asignar una sucursal</div>
+      <div style="font-size:42px;font-weight:900;letter-spacing:4px;margin-top:8px;">
+        ${esc(state.deviceCode || "----")}
+      </div>
+      <div style="opacity:.8;margin-top:8px;">Esperando asignación...</div>
+    </div>
+  `;
+}
 function renderTriplesPage() {
   if (!gridEl) return;
   if (titleEl) titleEl.textContent = "RESULTADOS HOY (TRIPLES)";
@@ -397,15 +408,27 @@ window.addEventListener("deviceActivated", async () => {
 
   deviceManager.connectSocket();
   await deviceManager.syncStatusOnce();
+
+  // pedir contexto (logo) asociado al code/branch
+  const ctx = await deviceManager.fetchContextOnce(); // (lo agregamos abajo)
+  setClientLogo(ctx?.client_logo_url || "");
+// si no está activo, no buscar resultados y mostrar pantalla de activación
+  if (!deviceManager.isActive) {
+    renderWaitingForActivation(); // función nueva (abajo)
+    return;
+  }
+
   await deviceManager.fetchResultsOnce();
+
+  
 
   await refreshAnimalitosCaches();
   setInterval(refreshAnimalitosCaches, ANIMALITOS_REFRESH_MS);
 
-  setClientLogo(window.__APP_CONFIG__?.CLIENT_LOGO || "");
 
   render();
   startRotation(ROTATION_MS);
+  
 })().catch((e) => {
   console.error("BOOT ERROR:", e);
   if (gridEl) gridEl.innerHTML = `<div style="padding:16px;">Error: ${esc(e.message || e)}</div>`;

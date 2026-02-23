@@ -44,7 +44,6 @@ function getActivationCode() {
 export default class DeviceManager {
   constructor(deviceId) {
     this.deviceId = deviceId || getDeviceId();
-
     this.activationCode = getActivationCode();
 
     // Estado
@@ -59,6 +58,20 @@ export default class DeviceManager {
     this.ws = null;
     this.wsRetryAttempt = 0;
     this.wsRetryTimer = null;
+  }
+
+  // ✅ ESTE MÉTODO VA AQUÍ (FUERA DEL CONSTRUCTOR)
+  async fetchContextOnce() {
+    if (!this.activationCode) return null;
+
+    const apiBase = getApiBase();
+    const res = await fetch(
+      `${apiBase}${ENDPOINTS.status}?code=${encodeURIComponent(this.activationCode)}`,
+      { cache: "no-store" }
+    );
+
+    if (!res.ok) return null;
+    return await res.json();
   }
 
   /**
