@@ -19,7 +19,7 @@ const SLOTS = (() => {
   return out;
 })();
 
-const deviceManager = new DeviceManager(DEVICE_ID);
+const deviceManager = new DeviceManager();
 
 // DOM
 const gridEl    = document.getElementById("grid");
