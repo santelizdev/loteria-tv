@@ -9,12 +9,19 @@
 //   3. Toma control inmediato de todos los clientes (tabs/WebViews abiertos).
 // ============================================
 
-const SW_VERSION = "v3"; // <— incrementar con cada deploy para forzar update
+const CACHE_NAME = "loteriatv-v20260223"; // cambia este string en cada deploy
 
 self.addEventListener("install", (event) => {
-  console.log(`[SW ${SW_VERSION}] install`);
-  // Activa este SW inmediatamente sin esperar que el viejo cierre
   self.skipWaiting();
+  event.waitUntil(caches.open(CACHE_NAME));
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)));
+    await self.clients.claim();
+  })());
 });
 
 self.addEventListener("activate", (event) => {

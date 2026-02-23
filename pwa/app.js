@@ -28,12 +28,21 @@ const clockEl   = document.getElementById("vzClock");
 const progressEl = document.getElementById("progressBar");
 const logoEl    = document.getElementById("clientLogo");
 
-function setClientLogo(src) {
-  if (!logoEl) return;
-  const url = String(src || "").trim();
-  if (!url) { logoEl.style.display = "none"; logoEl.removeAttribute("src"); return; }
-  logoEl.src = url;
-  logoEl.style.display = "block";
+function setClientLogo(url) {
+  const img = document.getElementById("clientLogo");
+  console.log("setClientLogo()", url, "imgExists=", !!img);
+
+  if (!img) return;
+  if (!url) {
+    img.style.display = "none";
+    return;
+  }
+
+  img.onload = () => console.log("Logo cargó OK:", url);
+  img.onerror = (e) => console.log("Logo ERROR:", url, e);
+
+  img.src = url;
+  img.style.display = "block";
 }
 
 function esc(v) {
@@ -411,6 +420,8 @@ window.addEventListener("deviceActivated", async () => {
 
   // pedir contexto (logo) asociado al code/branch
   const ctx = await deviceManager.fetchContextOnce(); // (lo agregamos abajo)
+  console.log("LOGO ctx:", ctx);
+  console.log("LOGO url:", ctx?.client_logo_url);
   setClientLogo(ctx?.client_logo_url || "");
 // si no está activo, no buscar resultados y mostrar pantalla de activación
   if (!deviceManager.isActive) {
