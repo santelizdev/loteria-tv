@@ -446,6 +446,3 @@ setClientLogo(logoUrl);
   console.error("BOOT ERROR:", e);
   if (gridEl) gridEl.innerHTML = `<div style="padding:16px;">Error: ${esc(e.message || e)}</div>`;
 });
-console.log("status ctx:", ctx);
-console.log("client_logo_url:", ctx?.client_logo_url);
-console.log("img src antes:", document.getElementById("clientLogo")?.src);
