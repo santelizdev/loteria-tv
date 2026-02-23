@@ -30,16 +30,17 @@ const logoEl    = document.getElementById("clientLogo");
 
 function setClientLogo(url) {
   const img = document.getElementById("clientLogo");
-  console.log("setClientLogo()", url, "imgExists=", !!img);
-
   if (!img) return;
-  if (!url) {
+
+  if (!url || !(url.startsWith("http://") || url.startsWith("https://"))) {
+    img.removeAttribute("src");
     img.style.display = "none";
+    console.log("Logo oculto. URL inválida:", url);
     return;
   }
 
-  img.onload = () => console.log("Logo cargó OK:", url);
-  img.onerror = (e) => console.log("Logo ERROR:", url, e);
+  img.onerror = () => console.log("Logo load error:", url);
+  img.onload = () => console.log("Logo loaded:", url);
 
   img.src = url;
   img.style.display = "block";
@@ -444,3 +445,6 @@ window.addEventListener("deviceActivated", async () => {
   console.error("BOOT ERROR:", e);
   if (gridEl) gridEl.innerHTML = `<div style="padding:16px;">Error: ${esc(e.message || e)}</div>`;
 });
+console.log("status ctx:", ctx);
+console.log("client_logo_url:", ctx?.client_logo_url);
+console.log("img src antes:", document.getElementById("clientLogo")?.src);
