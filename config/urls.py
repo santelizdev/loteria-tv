@@ -10,6 +10,11 @@ from core.api.views import (
     DeviceStatusAPIView,
     AnimalitosResultsAPIView,
 )
+from django.contrib import admin
+
+admin.site.site_header = "Admin SSGanador"
+admin.site.site_title = "SSGanador Admin"
+admin.site.index_title = "Panel de control"
 
 urlpatterns = [
     path("admin/", admin.site.urls),
