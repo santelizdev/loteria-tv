@@ -60,18 +60,18 @@ function getActivationCode() {
 // ============================================
 function DeviceManager(deviceId) {
   this.deviceId       = deviceId || getDeviceId();
-    this.activationCode = getActivationCode();
+  this.activationCode = getActivationCode();
 
   this.isActive  = false;
   this.branchId  = null;
 
   this.resultsInterval   = null;
-    this.heartbeatInterval = null;
+  this.heartbeatInterval = null;
 
   this.ws             = null;
-    this.wsRetryAttempt = 0;
+  this.wsRetryAttempt = 0;
   this.wsRetryTimer   = null;
-  }
+}
 
 DeviceManager.prototype.fetchContextOnce = function () {
   var self = this;
@@ -80,7 +80,7 @@ DeviceManager.prototype.fetchContextOnce = function () {
   var apiBase = getApiBase();
   return fetch(
     apiBase + ENDPOINTS.status + "?code=" + encodeURIComponent(self.activationCode),
-      { cache: "no-store" }
+    { cache: "no-store" }
   ).then(function (res) {
     if (!res.ok) return null;
     return res.json();
@@ -90,16 +90,16 @@ DeviceManager.prototype.fetchContextOnce = function () {
 DeviceManager.prototype.ensureActivationCode = function () {
   var self = this;
   var code = getActivationCode();
-    if (code) {
+  if (code) {
     self.activationCode = code;
     return Promise.resolve(code);
-    }
+  }
 
   var apiBase = getApiBase();
   return fetch(apiBase + ENDPOINTS.register, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      cache: "no-store",
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    cache: "no-store",
     body: JSON.stringify({ device_id: self.deviceId }),
   }).then(function (res) {
     if (!res.ok) {
@@ -121,41 +121,41 @@ DeviceManager.prototype.connectSocket = function () {
   var self = this;
   if (!self.activationCode) return;
 
-    if (
+  if (
     self.ws &&
     (self.ws.readyState === WebSocket.OPEN ||
       self.ws.readyState === WebSocket.CONNECTING)
-    ) {
-      return;
-    }
+  ) {
+    return;
+  }
 
   if (self.wsRetryTimer) {
     clearTimeout(self.wsRetryTimer);
     self.wsRetryTimer = null;
-    }
+  }
 
   var wsBase = getWsBase();
   var url    = wsBase + "/ws/device/" + encodeURIComponent(self.activationCode) + "/";
   self.ws    = new WebSocket(url);
 
   self.ws.onopen = function () {
-      console.log("WebSocket conectado:", url);
+    console.log("WebSocket conectado:", url);
     self.wsRetryAttempt = 0;
-    };
+  };
 
   self.ws.onmessage = function (ev) {
-      try {
+    try {
       var msg = JSON.parse(ev.data);
       self.handleSocketMessage(msg);
-      } catch (e) {
-        console.warn("WS parse error:", e);
-      }
-    };
+    } catch (e) {
+      console.warn("WS parse error:", e);
+    }
+  };
 
   self.ws.onclose = function () {
-      console.warn("WebSocket desconectado, reintentando...");
+    console.warn("WebSocket desconectado, reintentando...");
     self.scheduleReconnect();
-    };
+  };
 
   self.ws.onerror = function () {};
 };
@@ -172,35 +172,35 @@ DeviceManager.prototype.scheduleReconnect = function () {
   self.wsRetryTimer = setTimeout(function () {
     self.wsRetryTimer = null;
     self.connectSocket();
-    }, delay);
+  }, delay);
 };
 
 DeviceManager.prototype.handleSocketMessage = function (data) {
   // FIX: data?.type → data && data.type
   if (data && data.type === "device_assigned") {
-      if (!data.branch_id) return;
-      if (this.isActive && this.branchId === data.branch_id) return;
-      this.activate(data.branch_id);
-      return;
-    }
+    if (!data.branch_id) return;
+    if (this.isActive && this.branchId === data.branch_id) return;
+    this.activate(data.branch_id);
+    return;
+  }
 
   if (data && data.type === "branch_changed") {
-      if (this.branchId !== data.branch_id) {
-        this.branchId = data.branch_id;
-        window.dispatchEvent(new CustomEvent("branchChanged", { detail: data }));
-      }
+    if (this.branchId !== data.branch_id) {
+      this.branchId = data.branch_id;
+      window.dispatchEvent(new CustomEvent("branchChanged", { detail: data }));
     }
+  }
 };
 
 DeviceManager.prototype.activate = function (branchId) {
-    if (!branchId) return;
-    if (this.isActive && this.branchId === branchId) return;
+  if (!branchId) return;
+  if (this.isActive && this.branchId === branchId) return;
 
   this.isActive  = true;
   this.branchId  = branchId;
 
-    this.startHeartbeat();
-    this.startResultsPolling();
+  this.startHeartbeat();
+  this.startResultsPolling();
 
   window.dispatchEvent(new CustomEvent("deviceActivated", { detail: { branchId: branchId } }));
 
@@ -216,15 +216,15 @@ DeviceManager.prototype.startHeartbeat = function () {
 
   self.heartbeatInterval = setInterval(function () {
     fetch(apiBase + ENDPOINTS.heartbeat, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-        body: JSON.stringify({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({
         device_id: self.deviceId,
         code: self.activationCode,
-        }),
+      }),
     }).catch(function () {});
-    }, 30000);
+  }, 30000);
 };
 
 DeviceManager.prototype.startResultsPolling = function () {
@@ -237,16 +237,16 @@ DeviceManager.prototype.startResultsPolling = function () {
   self.resultsInterval = setInterval(function () {
     fetch(
       apiBase + ENDPOINTS.results + "?code=" + encodeURIComponent(self.activationCode),
-          { cache: "no-store" }
+      { cache: "no-store" }
     ).then(function (res) {
-        if (!res.ok) return;
+      if (!res.ok) return;
       return res.json().then(function (data) {
         window.dispatchEvent(new CustomEvent("resultsUpdated", { detail: data }));
       });
     }).catch(function (e) {
       console.warn("Error obteniendo resultados", e);
     });
-    }, 60000);
+  }, 60000);
 };
 
 DeviceManager.prototype.fetchResultsOnce = function () {
@@ -257,9 +257,9 @@ DeviceManager.prototype.fetchResultsOnce = function () {
 
   return fetch(
     apiBase + ENDPOINTS.results + "?code=" + encodeURIComponent(self.activationCode),
-        { cache: "no-store" }
+    { cache: "no-store" }
   ).then(function (res) {
-      if (!res.ok) return;
+    if (!res.ok) return;
     return res.json().then(function (data) {
       window.dispatchEvent(new CustomEvent("resultsUpdated", { detail: data }));
     });
@@ -273,32 +273,32 @@ DeviceManager.prototype.syncStatusOnce = function () {
   var apiBase = getApiBase();
   return fetch(
     apiBase + ENDPOINTS.status + "?code=" + encodeURIComponent(self.activationCode),
-      { cache: "no-store" }
+    { cache: "no-store" }
   ).then(function (res) {
     if (!res.ok) return;
     return res.json().then(function (data) {
       if (data.is_active && data.branch_id && !self.isActive) {
         self.activate(data.branch_id);
-    }
+      }
     });
   });
 };
 
 DeviceManager.prototype.handleOffline = function () {
-    console.warn("Sin conexión a internet");
+  console.warn("Sin conexión a internet");
   if (this.resultsInterval)   clearInterval(this.resultsInterval);
-    if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+  if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
   this.resultsInterval   = null;
-    this.heartbeatInterval = null;
+  this.heartbeatInterval = null;
 };
 
 DeviceManager.prototype.handleOnline = function () {
-    console.log("Conexión restaurada");
-    if (this.isActive) {
-      this.startHeartbeat();
-      this.startResultsPolling();
-    }
-    this.connectSocket();
+  console.log("Conexión restaurada");
+  if (this.isActive) {
+    this.startHeartbeat();
+    this.startResultsPolling();
+  }
+  this.connectSocket();
 };
 
 // Exponer globalmente para que app.js lo use sin import

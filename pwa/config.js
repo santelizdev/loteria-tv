@@ -9,7 +9,8 @@
   const WS_BASE  = isLocal ? "ws://127.0.0.1:8000"  : "wss://api.ssganador.lat";
 
   // Puedes setear el logo por entorno sin pisar API/WS
-  const CLIENT_LOGO = "";
+  const CLIENT_LOGO = isLocal ? "" : "https://.../logo.png";
+
   window.__APP_CONFIG__ = { API_BASE, WS_BASE, CLIENT_LOGO, isLocal };
 })();
 

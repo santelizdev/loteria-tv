@@ -72,18 +72,7 @@ function slotTo12h(hhmm) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FIX CRÍTICO: timeToHourSlot
-//
-// ANTES (roto): asumía que timeStr siempre era "HH:MM" (24h).
-//   "07:15 PM" → split(":")[0] → "07" → 7 < 8 → null → DESCARTADO
-//   "01:00 PM" → "01" → 1 < 8 → null → DESCARTADO
-//
-// AHORA (correcto): detecta formato 12h y convierte a 24h antes de evaluar.
-//   "07:15 PM" → 19 → slot "19:00" ✓
-//   "01:00 PM" → 13 → slot "13:00" ✓
-//   "12:00 PM" → 12 → slot "12:00" ✓
-//   "08:00 AM" →  8 → slot "08:00" ✓
-//   "13:00"    → 13 → slot "13:00" ✓  (formato 24h también soportado)
+// timeToHourSlot — soporta formatos 12h y 24h
 // ─────────────────────────────────────────────────────────────────────────────
 function timeToHourSlot(timeStr) {
   var s = String(timeStr || "").trim();
@@ -363,7 +352,7 @@ function fetchAnimalitosByDate(dateISO) {
   var api  = getApiBase();
   var url  = api + "/api/animalitos/?code=" + encodeURIComponent(code) + "&date=" + encodeURIComponent(dateISO);
   return fetch(url, { cache: "no-store" }).then(function (res) {
-  if (!res.ok) return [];
+    if (!res.ok) return [];
     return res.json().then(function (data) { return normalizeAnimalitos(data); });
   });
 }
@@ -375,8 +364,8 @@ function refreshAnimalitosCaches() {
   ]).then(function (results) {
     var todayRows = results[0];
     var yRows     = results[1];
-  state.animalitosTodayRows     = todayRows;
-  state.animalitosYesterdayRows = yRows;
+    state.animalitosTodayRows     = todayRows;
+    state.animalitosYesterdayRows = yRows;
     state.animalitosProviders     = computeProviders(todayRows.concat(yRows));
   });
 }
@@ -451,11 +440,11 @@ window.addEventListener("deviceActivated", function () {
   );
 
   deviceManager.ensureActivationCode().then(function (code) {
-  state.deviceCode = String(code || "----").toUpperCase();
-  renderDeviceCode(state.deviceCode);
-  render();
+    state.deviceCode = String(code || "----").toUpperCase();
+    renderDeviceCode(state.deviceCode);
+    render();
 
-  deviceManager.connectSocket();
+    deviceManager.connectSocket();
 
     return deviceManager.syncStatusOnce();
   }).then(function () {
@@ -470,7 +459,7 @@ window.addEventListener("deviceActivated", function () {
             ? window.__APP_CONFIG__.CLIENT_LOGO
             : ""));
 
-setClientLogo(logoUrl);
+    setClientLogo(logoUrl);
 
     // debug logs — ahora ctx SÍ está en scope
     console.log("status ctx:", ctx);
@@ -481,11 +470,11 @@ setClientLogo(logoUrl);
   }).then(function () {
     return refreshAnimalitosCaches();
   }).then(function () {
-  setInterval(refreshAnimalitosCaches, ANIMALITOS_REFRESH_MS);
-  render();
-  startRotation(ROTATION_MS);
+    setInterval(refreshAnimalitosCaches, ANIMALITOS_REFRESH_MS);
+    render();
+    startRotation(ROTATION_MS);
   }).catch(function (e) {
-  console.error("BOOT ERROR:", e);
+    console.error("BOOT ERROR:", e);
     if (gridEl) gridEl.innerHTML = '<div style="padding:16px;">Error: ' + esc(e.message || e) + '</div>';
-});
+  });
 })();
