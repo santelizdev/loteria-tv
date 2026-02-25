@@ -9,30 +9,47 @@
 //   3. Toma control inmediato de todos los clientes (tabs/WebViews abiertos).
 // ============================================
 
-const CACHE_NAME = "loteriatv-v20260225"; // <-- cambia en cada deploy
+const CACHE_NAME = "loteriatv-v20260225"; // cambia este string en cada deploy
 
-self.addEventListener("install", (event) => {
+self.addEventListener("install", function (event) {
   self.skipWaiting();
   event.waitUntil(caches.open(CACHE_NAME));
 });
 
-self.addEventListener("activate", (event) => {
-  event.waitUntil((async () => {
-    const keys = await caches.keys();
-    await Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)));
-    await self.clients.claim();
-  })());
+self.addEventListener("activate", function (event) {
+  event.waitUntil(
+    caches.keys().then(function (keys) {
+      return Promise.all(
+        keys.filter(function (k) { return k !== CACHE_NAME; })
+            .map(function (k) { return caches.delete(k); })
+      );
+    }).then(function () {
+      return self.clients.claim();
+    })
+  );
 });
 
-self.addEventListener("fetch", (event) => {
-  const url = new URL(event.request.url);
+self.addEventListener("fetch", function (event) {
+  var url = new URL(event.request.url);
 
-  // API: directo a red sin caché
+  // ✅ API: siempre red, sin caché
   if (url.hostname === "api.ssganador.lat") {
     event.respondWith(fetch(event.request, { cache: "no-store" }));
     return;
   }
 
-  // Assets: network-first sin caché
-  event.respondWith(fetch(event.request, { cache: "no-store" }));
+  // ✅ Assets: red primero, fallback a caché si está offline
+  event.respondWith(
+    fetch(event.request, { cache: "no-store" })
+      .then(function (resp) {
+        var copy = resp.clone();
+        caches.open(CACHE_NAME).then(function (cache) {
+          cache.put(event.request, copy);
+        });
+        return resp;
+      })
+      .catch(function () {
+        return caches.match(event.request);
+      })
+  );
 });
