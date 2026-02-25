@@ -141,8 +141,12 @@ var state = {
   deviceCode: "----",
   mode: "triples",
   pageIndex: 0,
-  triplesRows: [],
+   // Triples (por día)
+  triplesTodayRows: [],
+  triplesYesterdayRows: [],
   triplesProviders: [],
+  triplesDay: "today", // "today" | "yesterday"
+  // Animalitos 
   animalitosTodayRows: [],
   animalitosYesterdayRows: [],
   animalitosProviders: [],
@@ -234,42 +238,49 @@ function renderWaitingForActivation() {
 
 function renderTriplesPage() {
   if (!gridEl) return;
-  if (titleEl) titleEl.textContent = "RESULTADOS HOY (TRIPLES)";
 
-  var providers = state.triplesProviders;
+  var rows = (state.triplesDay === "today") ? state.triplesTodayRows : state.triplesYesterdayRows;
+
+  if (titleEl) {
+    titleEl.textContent = (state.triplesDay === "today")
+      ? "RESULTADOS HOY (TRIPLES)"
+      : "RESULTADOS AYER (TRIPLES)";
+  }
+
+  var providers = computeProviders(rows);
+  state.triplesProviders = providers;
+
   if (!providers.length) {
     gridEl.innerHTML = '<div style="padding:16px;">Sin resultados.</div>';
     return;
   }
 
   var groups = chunk(providers, 4);
-  var group  = groups[state.pageIndex] || groups[0];
+  var group = groups[state.pageIndex] || groups[0];
   if (!group) return;
 
-  var html = "";
-  for (var gi = 0; gi < group.length; gi++) {
-    var p = group[gi];
-    var byTime = mapRowsByProvider(state.triplesRows, p);
-    var rowsHtml = "";
-    for (var si = 0; si < SLOTS.length; si++) {
-      var t   = SLOTS[si];
-      var rec = byTime[t];
-      // FIX: rec?.number → rec && rec.number
-      var numHtml = (rec && rec.number)
-        ? esc(rec.number)
-        : '<span class="col__empty">…</span>';
-      rowsHtml +=
-        '<div class="col__row">' +
-          '<div class="col__time">' + esc(slotTo12h(t)) + '</div>' +
-          '<div class="col__num">' + numHtml + '</div>' +
-        '</div>';
-    }
-    html +=
-      '<article class="col">' +
-        '<div class="col__head"><div class="col__title">' + esc(p) + '</div></div>' +
-        '<div class="col__body">' + rowsHtml + '</div>' +
-      '</article>';
-  }
+  var html = group.map(function (p) {
+    var byTime = mapRowsByProvider(rows, p);
+
+    var rowsHtml = SLOTS.map(function (t) {
+      var rec = byTime.get(t);
+      var num = (rec && rec.number) ? esc(rec.number) : '<span class="col__empty">…</span>';
+
+      return (
+        '\n<div class="col__row">' +
+        '\n  <div class="col__time">' + esc(slotTo12h(t)) + '</div>' +
+        '\n  <div class="col__num">' + num + '</div>' +
+        '\n</div>\n'
+      );
+    }).join("");
+
+    return (
+      '\n<article class="col">' +
+      '\n  <div class="col__head"><div class="col__title">' + esc(p) + '</div></div>' +
+      '\n  <div class="col__body">' + rowsHtml + '</div>' +
+      '\n</article>\n'
+    );
+  }).join("");
 
   gridEl.innerHTML = html;
 }
@@ -403,9 +414,21 @@ function startRotation(durationMs) {
     tickStart = Date.now();
 
     if (state.mode === "triples") {
-      var groups = chunk(state.triplesProviders, 4);
+      var rows = (state.triplesDay === "today") ? state.triplesTodayRows : state.triplesYesterdayRows;
+      var providers = computeProviders(rows);
+      var groups = chunk(providers, 4);
+
       state.pageIndex += 1;
+
       if (state.pageIndex >= groups.length) {
+        if (state.triplesDay === "today") {
+          state.triplesDay = "yesterday";
+          state.pageIndex = 0;
+          render();
+          return;
+        }
+
+        // ya terminó AYER -> pasa a animalitos
         state.mode = "animalitos";
         state.pageIndex = 0;
         state.animalitosDay = "today";
@@ -414,6 +437,7 @@ function startRotation(durationMs) {
         startRotation(ANIMALITOS_INTERVAL_MS);
         return;
       }
+
       render();
       return;
     }
@@ -431,14 +455,37 @@ function startRotation(durationMs) {
 
 // ---------- EVENTS ----------
 window.addEventListener("resultsUpdated", function (e) {
-  var raw = Array.isArray(e.detail) ? e.detail : [];
-  state.triplesRows      = normalizeTriples(raw);
-  state.triplesProviders = computeProviders(state.triplesRows);
-  if (state.mode === "triples") render();
-});
+  var d = e.detail;
 
-window.addEventListener("deviceActivated", function () {
-  refreshAnimalitosCaches();
+  // Caso A: backend devuelve array => asumimos HOY
+  if (Array.isArray(d)) {
+    state.triplesTodayRows = normalizeTriples(d);
+  }
+
+  // Caso B: backend devuelve objeto => buscamos varias formas comunes
+  if (d && typeof d === "object" && !Array.isArray(d)) {
+    // 1) {today:[], yesterday:[]}
+    if (Array.isArray(d.today)) state.triplesTodayRows = normalizeTriples(d.today);
+    if (Array.isArray(d.yesterday)) state.triplesYesterdayRows = normalizeTriples(d.yesterday);
+
+    // 2) {results:[]}
+    if (Array.isArray(d.results)) state.triplesTodayRows = normalizeTriples(d.results);
+
+    // 3) {triples:{today:[],yesterday:[]}} o {triples:[]}
+    if (d.triples) {
+      if (Array.isArray(d.triples)) state.triplesTodayRows = normalizeTriples(d.triples);
+      if (d.triples && typeof d.triples === "object") {
+        if (Array.isArray(d.triples.today)) state.triplesTodayRows = normalizeTriples(d.triples.today);
+        if (Array.isArray(d.triples.yesterday)) state.triplesYesterdayRows = normalizeTriples(d.triples.yesterday);
+      }
+    }
+  }
+
+  // providers dependen del día actual
+  var rows = (state.triplesDay === "today") ? state.triplesTodayRows : state.triplesYesterdayRows;
+  state.triplesProviders = computeProviders(rows);
+
+  if (state.mode === "triples") render();
 });
 
 // ---------- BOOT ----------
