@@ -1,11 +1,13 @@
 services:
+  # --- BASE DE DATOS ---
   postgres:
-    image: postgres:16
+    image: postgres:16-alpine
     container_name: loteria_postgres
+    restart: always
     environment:
-      POSTGRES_DB: loteria
-      POSTGRES_USER: loteria
-      POSTGRES_PASSWORD: loteria
+      POSTGRES_DB: ${DB_NAME:-loteria}
+      POSTGRES_USER: ${DB_USER:-loteria}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-loteria}
     ports:
       - "5432:5432"
     volumes:
@@ -14,15 +16,51 @@ services:
       test: ["CMD-SHELL", "pg_isready -U loteria -d loteria"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 5
 
+  # --- CACHE / WEBSOCKET BROKER ---
   redis:
-    image: redis:7
+    image: redis:7-alpine
     container_name: loteria_redis
+    restart: always
     ports:
       - "6379:6379"
     volumes:
       - redisdata:/data
+
+  # --- BACKEND DJANGO (Daphne para WebSockets) ---
+  api:
+    build: .
+    container_name: loteria_backend
+    restart: always
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=1
+      - DATABASE_URL=postgres://loteria:loteria@postgres:5432/loteria
+      - REDIS_URL=redis://redis:6379/1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  # --- FRONTEND PWA (Servidor estático) ---
+  pwa:
+    image: python:3.12-alpine
+    container_name: loteria_pwa
+    restart: always
+    working_dir: /app/pwa
+    volumes:
+      - ./pwa:/app/pwa
+    ports:
+      - "8080:8080"
+    command: python3 -m http.server 8080
+    depends_on:
+      - api
 
 volumes:
   pgdata:
