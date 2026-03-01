@@ -1,6 +1,7 @@
 from django.contrib import admin
 from django.contrib.staticfiles.urls import staticfiles_urlpatterns
 from django.conf import settings
+from django.urls import path, include
 from django.conf.urls.static import static
 from django.urls import path
 from core.api.views import (
@@ -18,7 +19,7 @@ admin.site.index_title = "Panel de control"
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    
+    path('', include('django_prometheus.urls')),
 
     path("api/results/", CurrentResultsAPIView.as_view()),
     path("api/animalitos/", AnimalitosResultsAPIView.as_view()),

@@ -21,4 +21,12 @@ python-dotenv==1.2.1
 dj-database-url==3.1.1
 
 psycopg[binary]==3.2.13
+<<<<<<< HEAD
 Pillow>=10
+=======
+Pillow>=10
+
+django-extensions==3.2.3
+
+django-prometheus==2.3.1
+>>>>>>> 23fc715 (Fix db autorenew dataset daily yesterday/today)
