@@ -35,6 +35,7 @@ class Command(BaseCommand):
                 defaults={
                     "winning_number": r.winning_number,
                     "image_url": r.image_url or "",
+                    "extra": r.extra, 
                 },
             )
             if was_created:
