@@ -8,8 +8,3 @@ def scrape_triples():
 @shared_task
 def scrape_animalitos():
     call_command("scrape_lotoven_animalitos")
-
-@shared_task(name="core.tasks.archive_daily")
-def archive_daily():
-    # OJO: tu comando real es archive_daily_results (plural)
-    call_command("archive_daily_results")
