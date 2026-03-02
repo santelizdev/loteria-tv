@@ -48,3 +48,9 @@ Incluye:
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+```
+
+## Diagnóstico remoto Smart TV
+
+Se añadió un checklist operativo para validar incidencias de ciclo/tránsito de pantallas en PWA (Venezuela): `pwa/TV_VENEZUELA_DIAGNOSTICO.md`.
+

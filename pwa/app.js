@@ -469,14 +469,29 @@ function startRotation(durationMs) {
     }
 
     // Modo animalitos
+    var groups2      = chunk(state.animalitosProviders, 4);
+    var totalGroups2 = Math.max(1, groups2.length);
+
     if (state.animalitosDay === "today") {
       state.animalitosDay = "yesterday";
-    } else {
-      state.animalitosDay = "today";
-      var groups2 = chunk(state.animalitosProviders, 4);
-      state.animalitosGroupIndex =
-        (state.animalitosGroupIndex + 1) % Math.max(1, groups2.length);
+      render();
+      return;
     }
+
+    // Estábamos en "yesterday". Si aún quedan grupos, avanzamos al siguiente.
+    if (state.animalitosGroupIndex + 1 < totalGroups2) {
+      state.animalitosGroupIndex += 1;
+      state.animalitosDay = "today";
+      render();
+      return;
+    }
+
+    // Fin de animalitos (hoy/ayer y todos los grupos) -> volver a triples.
+    state.mode                = "triples";
+    state.triplesDay          = "today";
+    state.pageIndex           = 0;
+    state.animalitosDay       = "today";
+    state.animalitosGroupIndex = 0;
     render();
   }, durationMs);
 }
