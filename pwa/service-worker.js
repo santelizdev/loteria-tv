@@ -9,7 +9,7 @@
 //   3. Toma control inmediato de todos los clientes (tabs/WebViews abiertos).
 // ============================================
 
-const CACHE_NAME = "loteriatv-v20260225"; // cambia este string en cada deploy
+const CACHE_NAME = "loteriatv-v20260226"; // cambia este string en cada deploy
 
 self.addEventListener("install", function (event) {
   self.skipWaiting();
