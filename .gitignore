@@ -28,3 +28,7 @@ __MACOSX/
 dist/
 build/
 node_modules/
+
+.env
+.env.*
+
