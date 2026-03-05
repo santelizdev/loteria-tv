@@ -298,7 +298,7 @@ html, body {
     --footer-h: 10px;
     --gap: 14px;
 
-    --title-size: 20px;
+    --title-size: 25px;
     --provider-size: 20px;
     --row-size: 14px;
     --num-size: 26px;
@@ -318,9 +318,9 @@ html, body {
     --gap: 18px;
 
     --title-size: 28px;
-    --provider-size: 26px;
+    --provider-size: 32px;
     --row-size: 18px;
-    --num-size: 38px;
+    --num-size: 42px;
   }
 
   .topbar { padding: 14px 22px; }
