@@ -6,9 +6,9 @@
 // - index.html debe cargar: config.js → deviceManager.js → app.js (sin type="module")
 // ============================================
 
-var ROTATION_MS            = 20000;
+var ROTATION_MS            = 40000;
 var ANIMALITOS_REFRESH_MS  = 60000;
-var ANIMALITOS_INTERVAL_MS = 15000;
+var ANIMALITOS_INTERVAL_MS = 40000;
 
 var SLOTS = (function () {
   var out = [];
@@ -26,6 +26,7 @@ var gridEl     = document.getElementById("grid");
 var titleEl    = document.getElementById("resultsTitle");
 var clockEl    = document.getElementById("vzClock");
 var progressEl = document.getElementById("progressBar");
+var themeToggleEl = document.getElementById("themeToggle");
 
 // ---------- HELPERS ----------
 function esc(v) {
@@ -44,7 +45,7 @@ function slotTo12h(hhmm) {
   if (isNaN(h) || isNaN(m)) return hhmm;
   var ampm = h >= 12 ? "PM" : "AM";
   var h12  = ((h + 11) % 12) + 1;
-  return (h12 < 10 ? "0" : "") + h12 + ":" + (m < 10 ? "0" : "") + m + " " + ampm;
+  return h12 + ":" + (m < 10 ? "0" : "") + m + " " + ampm;
 }
 
 function timeToHourSlot(timeStr) {
@@ -105,6 +106,7 @@ function setClientLogo(url) {
   if (!isAbsolute) {
     img.removeAttribute("src");
     img.style.display = "none";
+    state.clientLogoUrl = "";
     console.log("Logo oculto. URL invalida:", url);
     return;
   }
@@ -112,11 +114,13 @@ function setClientLogo(url) {
   img.onload  = function () { console.log("Logo OK:", url); };
   img.src     = url;
   img.style.display = "block";
+  state.clientLogoUrl = url;
 }
 
 // ---------- STATE ----------
 var state = {
   deviceCode: "----",
+  clientLogoUrl: "",
   mode: "triples",
 
   triplesTodayRows:     [],
@@ -172,6 +176,24 @@ function normalizeAnimalitos(raw) {
   return out;
 }
 
+var PROVIDER_ORDER = {
+  "Triple Caracas A": 0,
+  "Triple Caracas B": 1,
+  "Triple Caracas C": 2,
+  "Triple Tachira A": 3,
+  "Triple Tachira B": 4,
+  "Triple Tachira C": 5,
+  "Triple Zulia A": 6,
+  "Triple Zulia B": 7,
+  "Triple Zulia C": 8,
+  "Triple Caliente A": 9,
+  "Triple Caliente B": 10,
+  "Triple Caliente C": 11,
+  "Triple Zamorano A": 12,
+  "Triple Zamorano B": 13,
+  "Triple Zamorano C": 14
+};
+
 function computeProviders(rows) {
   var seen = {};
   var out  = [];
@@ -179,7 +201,173 @@ function computeProviders(rows) {
     var p = rows[i].provider;
     if (p && !seen[p]) { seen[p] = true; out.push(p); }
   }
-  return out.sort(function (a, b) { return a.localeCompare(b); });
+  return out.sort(function (a, b) {
+    var ra = PROVIDER_ORDER[a];
+    var rb = PROVIDER_ORDER[b];
+    var ha = typeof ra === "number";
+    var hb = typeof rb === "number";
+    if (ha && hb) return ra - rb;
+    if (ha && !hb) return -1;
+    if (!ha && hb) return 1;
+    return a.localeCompare(b);
+  });
+}
+
+function parseTripleGroupProvider(name) {
+  var m = String(name || "").match(/^(.*)\s([ABC])$/);
+  if (!m) return null;
+  var base = String(m[1] || "").trim();
+  var group = String(m[2] || "").toUpperCase();
+  if (!base || (group !== "A" && group !== "B" && group !== "C")) return null;
+  return { base: base, group: group };
+}
+
+function buildTripleCards(todayRows, yesterdayRows) {
+  var grouped = {};
+  var singleToday = {};
+  var singleYesterday = {};
+  var i;
+
+  function isGroupedBase(base) {
+    return base === "Triple Caracas" ||
+      base === "Triple Tachira" ||
+      base === "Triple Zulia" ||
+      base === "Triple Caliente" ||
+      base === "Triple Zamorano";
+  }
+
+  function pushGrouped(base, group, source, row) {
+    if (!grouped[base]) {
+      grouped[base] = {
+        A: { today: [], yesterday: [] },
+        B: { today: [], yesterday: [] },
+        C: { today: [], yesterday: [] }
+      };
+    }
+    grouped[base][group][source].push({ time: row.time, number: row.number });
+  }
+
+  function ingest(rows, source) {
+    for (var j = 0; j < rows.length; j++) {
+      var r = rows[j];
+      var parsed = parseTripleGroupProvider(r.provider);
+      if (parsed && isGroupedBase(parsed.base)) {
+        pushGrouped(parsed.base, parsed.group, source, r);
+      } else {
+        var target = source === "today" ? singleToday : singleYesterday;
+        if (!target[r.provider]) target[r.provider] = [];
+        target[r.provider].push({ time: r.time, number: r.number });
+      }
+    }
+  }
+
+  ingest(todayRows || [], "today");
+  ingest(yesterdayRows || [], "yesterday");
+
+  function sortRowsByTime(arr) {
+    return arr.sort(function (a, b) {
+      return String(a.time).localeCompare(String(b.time));
+    });
+  }
+
+  function rowsByTimeMap(arr) {
+    var m = {};
+    for (var j = 0; j < arr.length; j++) m[arr[j].time] = arr[j].number;
+    return m;
+  }
+
+  var cards = [];
+  var basesPriority = ["Triple Caracas", "Triple Tachira", "Triple Zulia", "Triple Caliente", "Triple Zamorano"];
+  for (i = 0; i < basesPriority.length; i++) {
+    var bp = basesPriority[i];
+    if (!grouped[bp]) continue;
+    var g = grouped[bp];
+    var finalGroups = { A: [], B: [], C: [] };
+    var labels = ["A", "B", "C"];
+    for (var li = 0; li < labels.length; li++) {
+      var gl = labels[li];
+      var tRows = sortRowsByTime(g[gl].today);
+      var yRows = sortRowsByTime(g[gl].yesterday);
+      finalGroups[gl] = tRows.length ? tRows : yRows; // fallback a AYER si HOY viene vacío
+    }
+    cards.push({ kind: "grouped", provider: bp, groups: finalGroups });
+    delete grouped[bp];
+  }
+
+  var extraBases = [];
+  for (var k in grouped) if (grouped.hasOwnProperty(k)) extraBases.push(k);
+  extraBases.sort(function (a, b) { return a.localeCompare(b); });
+  for (i = 0; i < extraBases.length; i++) {
+    var eb = extraBases[i];
+    var eg = grouped[eb];
+    var finalExtra = { A: [], B: [], C: [] };
+    var exlabels = ["A", "B", "C"];
+    for (var li2 = 0; li2 < exlabels.length; li2++) {
+      var gl2 = exlabels[li2];
+      var tRows2 = sortRowsByTime(eg[gl2].today);
+      var yRows2 = sortRowsByTime(eg[gl2].yesterday);
+      finalExtra[gl2] = tRows2.length ? tRows2 : yRows2;
+    }
+    cards.push({ kind: "grouped", provider: eb, groups: finalExtra });
+  }
+
+  var singleProvidersMap = {};
+  for (k in singleToday) if (singleToday.hasOwnProperty(k)) singleProvidersMap[k] = true;
+  for (k in singleYesterday) if (singleYesterday.hasOwnProperty(k)) singleProvidersMap[k] = true;
+
+  var singleProviders = [];
+  for (k in singleProvidersMap) if (singleProvidersMap.hasOwnProperty(k)) singleProviders.push(k);
+  singleProviders.sort(function (a, b) { return a.localeCompare(b); });
+
+  for (i = 0; i < singleProviders.length; i++) {
+    var sp = singleProviders[i];
+    var todayList = sortRowsByTime(singleToday[sp] || []);
+    var ydayList = sortRowsByTime(singleYesterday[sp] || []);
+    var tm = rowsByTimeMap(todayList);
+    var ym = rowsByTimeMap(ydayList);
+
+    var timesMap = {};
+    for (var tt in tm) if (tm.hasOwnProperty(tt)) timesMap[tt] = true;
+    for (tt in ym) if (ym.hasOwnProperty(tt)) timesMap[tt] = true;
+    var times = [];
+    for (tt in timesMap) if (timesMap.hasOwnProperty(tt)) times.push(tt);
+    times.sort(function (a, b) { return String(a).localeCompare(String(b)); });
+
+    var rowsDual = [];
+    for (var ti = 0; ti < times.length; ti++) {
+      var t = times[ti];
+      rowsDual.push({
+        time: t,
+        today: tm[t] || "",
+        yesterday: ym[t] || "",
+      });
+    }
+    cards.push({ kind: "single", provider: sp, rows: rowsDual });
+  }
+
+  return cards;
+}
+
+function applyTheme(theme) {
+  var t = (theme === "light") ? "light" : "dark";
+  if (document.body) {
+    document.body.className = (t === "light") ? "theme-light" : "theme-dark";
+  }
+  try { localStorage.setItem("theme_mode", t); } catch (e) {}
+  if (themeToggleEl) {
+    themeToggleEl.textContent = (t === "light") ? "DIA" : "NOCHE";
+  }
+}
+
+function initThemeToggle() {
+  var saved = "dark";
+  try { saved = localStorage.getItem("theme_mode") || "dark"; } catch (e) {}
+  applyTheme(saved);
+  if (!themeToggleEl) return;
+  themeToggleEl.onclick = function () {
+    var curr = document.body ? document.body.className : "theme-dark";
+    applyTheme(curr === "theme-light" ? "dark" : "light");
+  };
 }
 
 // Retorna objeto plano {}  — acceder con byTime[t], NUNCA byTime.get(t)
@@ -215,53 +403,103 @@ function renderWaitingForActivation() {
 function renderTriplesPage() {
   if (!gridEl) return;
 
-  var rows = (state.triplesDay === "today")
-    ? state.triplesTodayRows
-    : state.triplesYesterdayRows;
+  var rowsToday = state.triplesTodayRows || [];
+  var rowsYesterday = state.triplesYesterdayRows || [];
 
   if (titleEl) {
-    titleEl.textContent = (state.triplesDay === "today")
-      ? "RESULTADOS HOY (TRIPLES)"
-      : "RESULTADOS AYER (TRIPLES)";
+    titleEl.textContent = "RESULTADOS HOY/AYER (TRIPLES)";
   }
 
-  var providers = computeProviders(rows);
-  state.triplesProviders = providers;
+  var cards = buildTripleCards(rowsToday, rowsYesterday);
+  state.triplesProviders = [];
+  for (var ci = 0; ci < cards.length; ci++) state.triplesProviders.push(cards[ci].provider);
 
-  if (!providers.length) {
+  if (!cards.length) {
     gridEl.innerHTML = '<div style="padding:16px;">Sin resultados.</div>';
     return;
   }
 
-  var groups = chunk(providers, 4);
+  var groups = chunk(cards, 4);
   var group  = groups[state.pageIndex] || groups[0];
   if (!group) return;
 
   var html = "";
   for (var gi = 0; gi < group.length; gi++) {
-    var p      = group[gi];
-    var byTime = mapRowsByProvider(rows, p);
-    var rowsHtml = "";
+    var card = group[gi];
+    if (card.kind === "grouped") {
+      var gnames = ["A", "B", "C"];
+      var bodyHtml = "";
+      for (var gj = 0; gj < gnames.length; gj++) {
+        var gname = gnames[gj];
+        var grows = card.groups[gname] || [];
+        var gRowsHtml = "";
+        if (!grows.length) {
+          gRowsHtml =
+            '<div class="col__group-row">' +
+              '<div class="col__time">\u2026</div>' +
+              '<div class="col__num"><span class="col__empty">\u2026</span></div>' +
+            '</div>';
+        } else {
+          for (var gr = 0; gr < grows.length; gr++) {
+            gRowsHtml +=
+              '<div class="col__group-row">' +
+                '<div class="col__time">' + esc(slotTo12h(grows[gr].time)) + '</div>' +
+                '<div class="col__num">' + esc(grows[gr].number) + '</div>' +
+              '</div>';
+          }
+        }
+        bodyHtml +=
+          '<section class="col__group">' +
+            '<div class="col__group-title">TRIPLE ' + gname + '</div>' +
+            gRowsHtml +
+          '</section>';
+      }
+      html +=
+        '<article class="col col--grouped">' +
+          '<div class="col__head"><div class="col__title">' + esc(card.provider) + '</div></div>' +
+          '<div class="col__body col__body--grouped">' + bodyHtml + '</div>' +
+        '</article>';
+    } else {
+      var p      = card.provider;
+      var rowsHtml = "";
 
-    for (var si = 0; si < SLOTS.length; si++) {
-      var t   = SLOTS[si];
-      var rec = byTime[t]; // objeto plano, NO .get()
-      var num = (rec && rec.number)
-        ? esc(rec.number)
-        : '<span class="col__empty">\u2026</span>';
+      if (!card.rows.length) {
+        rowsHtml =
+          '<div class="col__row col__row--dual">' +
+            '<div class="col__time">\u2026</div>' +
+            '<div class="col__num2">' +
+              '<div class="col__num2-col"><div class="col__num2-label">HOY</div><div class="col__num"><span class="col__empty">\u2026</span></div></div>' +
+              '<div class="col__num2-col"><div class="col__num2-label">AYER</div><div class="col__num"><span class="col__empty">\u2026</span></div></div>' +
+            '</div>' +
+          '</div>';
+      } else {
+        for (var si = 0; si < card.rows.length; si++) {
+          var rr = card.rows[si];
+          var nToday = rr.today ? esc(rr.today) : '<span class="col__empty">\u2026</span>';
+          var nYday = rr.yesterday ? esc(rr.yesterday) : '<span class="col__empty">\u2026</span>';
+          rowsHtml +=
+            '<div class="col__row col__row--dual">' +
+              '<div class="col__time">' + esc(slotTo12h(rr.time)) + '</div>' +
+              '<div class="col__num2">' +
+                '<div class="col__num2-col">' +
+                  '<div class="col__num2-label">HOY</div>' +
+                  '<div class="col__num">' + nToday + '</div>' +
+                '</div>' +
+                '<div class="col__num2-col">' +
+                  '<div class="col__num2-label">AYER</div>' +
+                  '<div class="col__num">' + nYday + '</div>' +
+                '</div>' +
+              '</div>' +
+            '</div>';
+        }
+      }
 
-      rowsHtml +=
-        '<div class="col__row">' +
-          '<div class="col__time">' + esc(slotTo12h(t)) + '</div>' +
-          '<div class="col__num">'  + num + '</div>' +
-        '</div>';
+      html +=
+        '<article class="col">' +
+          '<div class="col__head"><div class="col__title">' + esc(p) + '</div></div>' +
+          '<div class="col__body">' + rowsHtml + '</div>' +
+        '</article>';
     }
-
-    html +=
-      '<article class="col">' +
-        '<div class="col__head"><div class="col__title">' + esc(p) + '</div></div>' +
-        '<div class="col__body">' + rowsHtml + '</div>' +
-      '</article>';
   }
 
   gridEl.innerHTML = html;
@@ -299,9 +537,8 @@ function renderAnimalitosGroup(day) {
     for (var si = 0; si < SLOTS.length; si++) {
       var t      = SLOTS[si];
       var rec    = byTime[t]; // objeto plano, NO .get()
-      var img    = (rec && rec.image)
-        ? '<img class="col__icon" src="' + esc(rec.image) + '" alt="" />'
-        : "";
+      var imgUrl = (rec && rec.image) ? rec.image : state.clientLogoUrl;
+      var img    = imgUrl ? '<img class="col__icon" src="' + esc(imgUrl) + '" alt="" />' : "";
       var animal = (rec && rec.animal)
         ? esc(rec.animal)
         : '<span class="col__empty">\u2026</span>';
@@ -439,22 +676,13 @@ function startRotation(durationMs) {
     tickStart = Date.now();
 
     if (state.mode === "triples") {
-      var rows      = (state.triplesDay === "today")
-        ? state.triplesTodayRows
-        : state.triplesYesterdayRows;
-      var providers = computeProviders(rows);
-      var groups    = chunk(providers, 4);
+      var tripleCards = buildTripleCards(state.triplesTodayRows || [], state.triplesYesterdayRows || []);
+      var groups    = chunk(tripleCards, 4);
 
       state.pageIndex += 1;
 
       if (state.pageIndex >= groups.length) {
-        if (state.triplesDay === "today") {
-          state.triplesDay = "yesterday";
-          state.pageIndex  = 0;
-          render();
-          return;
-        }
-        // Fin triples ayer → animalitos
+        // Fin triples (HOY/AYER juntos) → animalitos
         state.mode               = "animalitos";
         state.pageIndex          = 0;
         state.animalitosDay      = "today";
@@ -522,16 +750,16 @@ window.addEventListener("resultsUpdated", function (e) {
     }
   }
 
-  var rows = (state.triplesDay === "today")
-    ? state.triplesTodayRows
-    : state.triplesYesterdayRows;
-  state.triplesProviders = computeProviders(rows);
+  var cards = buildTripleCards(state.triplesTodayRows || [], state.triplesYesterdayRows || []);
+  state.triplesProviders = [];
+  for (var ci = 0; ci < cards.length; ci++) state.triplesProviders.push(cards[ci].provider);
 
   if (state.mode === "triples") render();
 });
 
 // ---------- BOOT ----------
 (function boot() {
+  initThemeToggle();
   startClock();
 
   renderDeviceCode(

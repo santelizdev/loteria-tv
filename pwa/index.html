@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="./src/styles.css" />
   </head>
 
-  <body>
+  <body class="theme-dark">
     <div id="app" class="app">
 
       <header class="topbar">
@@ -39,6 +39,7 @@
 
         <!-- Derecha -->
         <div class="topbar__right">
+          <button id="themeToggle" class="theme-toggle" type="button">NOCHE</button>
           <div class="timebox">
             <span class="timebox__label">HORA</span>
             <span id="vzClock" class="timebox__value">--:-- --</span>
@@ -54,6 +55,9 @@
         <div class="progress-track">
           <div id="progressBar" class="progress-bar"></div>
         </div>
+        <div class="ticker">
+          Estimado cliente: Para contrataciones comuníquese al 04128899941, Si desea ver resultados anteriores, visite nuestra pagina de resultados online www.ssganador.com
+        </div>
       </footer>
 
     </div>
@@ -64,4 +68,3 @@
     <script src="./app.js"></script>
   </body>
 </html>
-
