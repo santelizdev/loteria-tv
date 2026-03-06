@@ -203,11 +203,16 @@ html, body {
 }
 
 .col__body--grouped {
-  display: block;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 
 .col__group {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   padding: 6px 8px;
   border-bottom: 1px solid #d6e1f3;
 }
@@ -223,6 +228,13 @@ html, body {
   color: #1a2f63;
   margin: 0 0 6px 0;
   letter-spacing: 0.3px;
+}
+
+.col__abc-rows {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .col__abc-head,
@@ -251,6 +263,8 @@ html, body {
 }
 
 .col__abc-row {
+  flex: 1;
+  min-height: 0;
   padding: 2px 0;
 }
 
@@ -279,6 +293,12 @@ html, body {
   font-size: 18px;
   font-weight: 900;
   padding: 0 2px;
+  white-space: nowrap;
+}
+
+.col__abc-cell--sign {
+  font-size: 16px;
+  letter-spacing: 0.1px;
 }
 
 .col__abc-head--ac,
@@ -308,6 +328,22 @@ html, body {
   font-weight: 800;
   letter-spacing: 0.3px;
   text-align: center;
+  color: #2d4171;
+}
+
+.col__num2-head {
+  margin: 2px 0 0 0;
+  padding: 0 98px 0 96px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.col__num2-head-item {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
   color: #2d4171;
 }
 
@@ -496,6 +532,10 @@ body.theme-dark .col__num2-label {
   color: #cfe0ff;
 }
 
+body.theme-dark .col__num2-head-item {
+  color: #cfe0ff;
+}
+
 body.theme-dark .col__num {
   color: #f7fbff;
   background: rgba(255,255,255,0.06);
@@ -541,6 +581,8 @@ body.theme-dark .ticker {
   .col__row--dual { grid-template-columns: 80px 1fr; }
   .col__num2 { gap: 4px; }
   .col__num2-label { font-size: 9px; }
+  .col__num2-head { padding: 0 88px 0 86px; }
+  .col__abc-cell--sign { font-size: 14px; }
   .col__row--dual .col__num { font-size: 18px; min-height: 26px; }
   .col__row--animal { grid-template-columns: 80px 62px 1fr; }
   .col__icon { width: 26px; height: 26px; }
@@ -589,6 +631,8 @@ body.theme-dark .ticker {
   .col__row { grid-template-columns: 120px 1fr; padding: 0 12px; }
   .col__row--dual { grid-template-columns: 120px 1fr; }
   .col__num2-label { font-size: 12px; }
+  .col__num2-head { padding: 0 126px 0 124px; }
+  .col__abc-cell--sign { font-size: 18px; }
   .col__row--dual .col__num { font-size: 30px; min-height: 38px; }
   .col__row--animal { grid-template-columns: 120px 100px 1fr; }
   .col__time { width: 104px; font-size: 16px; }

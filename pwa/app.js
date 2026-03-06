@@ -321,12 +321,25 @@ function buildTripleCards(todayRows, yesterdayRows) {
     grouped[base][source][group][mapped] = row.number;
   }
 
+  function isLegacyGroupedProvider(name) {
+    return name === "Triple Chance" ||
+      name === "Triple Caracas" ||
+      name === "Triple Tachira" ||
+      name === "Triple Zulia" ||
+      name === "Triple Caliente" ||
+      name === "Triple Zamorano";
+  }
+
   function ingest(rows, source) {
     for (var j = 0; j < rows.length; j++) {
       var r = rows[j];
       var parsed = parseTripleGroupProvider(r.provider);
       if (parsed && isGroupedBase(parsed.base)) {
         pushGrouped(parsed.base, parsed.group, source, r);
+      } else if (isLegacyGroupedProvider(r.provider)) {
+        // Compatibilidad con data legacy guardada sin sufijo A/B/C.
+        // Se ubica en columna C para evitar duplicados en tablas secundarias.
+        pushGrouped(r.provider, "C", source, r);
       } else {
         var target = source === "today" ? singleToday : singleYesterday;
         if (!target[r.provider]) target[r.provider] = [];
@@ -348,7 +361,12 @@ function buildTripleCards(todayRows, yesterdayRows) {
   var basesPriority = ["Triple Chance", "Triple Caracas", "Triple Tachira", "Triple Zulia", "Triple Caliente", "Triple Zamorano"];
   for (i = 0; i < basesPriority.length; i++) {
     var bp = basesPriority[i];
-    if (!grouped[bp]) continue;
+    if (!grouped[bp]) {
+      grouped[bp] = {
+        today: { A: {}, B: {}, C: {} },
+        yesterday: { A: {}, B: {}, C: {} }
+      };
+    }
     cards.push({
       kind: "grouped",
       provider: bp,
@@ -505,20 +523,21 @@ function renderTriplesPage() {
         for (var hc = 0; hc < cols.length; hc++) head += '<div class="col__abc-col-head">' + cols[hc] + '</div>';
         head += '</div>';
 
-        var rows2 = "";
+        var rows2 = '<div class="col__abc-rows">';
         for (var rs = 0; rs < slots.length; rs++) {
           var tm = slots[rs];
           rows2 += '<div class="col__abc-row' + rowAcClass + '"><div class="col__abc-time">' + esc(slotTo12h(tm)) + '</div>';
           for (var cc = 0; cc < cols.length; cc++) {
             var c = cols[cc];
             var v = (sourceMap && sourceMap[c] && sourceMap[c][tm]) ? sourceMap[c][tm] : "";
-            rows2 += '<div class="col__abc-cell">' + (v ? esc(v) : '<span class="col__empty">\u2026</span>') + '</div>';
+            var cellClass = /[A-Za-z]/.test(v) ? " col__abc-cell col__abc-cell--sign" : " col__abc-cell";
+            rows2 += '<div class="' + cellClass + '">' + (v ? esc(v) : '<span class="col__empty">\u2026</span>') + '</div>';
           }
           rows2 += '</div>';
         }
+        rows2 += '</div>';
         return (
           '<section class="col__group">' +
-            '<div class="col__group-title">RESULTADOS ' + label + '</div>' +
             head + rows2 +
           '</section>'
         );
@@ -539,14 +558,16 @@ function renderTriplesPage() {
 
       if (!card.rows.length) {
         rowsHtml =
+          '<div class="col__num2-head"><div class="col__num2-head-item">HOY</div><div class="col__num2-head-item">AYER</div></div>' +
           '<div class="col__row col__row--dual">' +
             '<div class="col__time">\u2026</div>' +
             '<div class="col__num2">' +
-              '<div class="col__num2-col"><div class="col__num2-label">HOY</div><div class="col__num"><span class="col__empty">\u2026</span></div></div>' +
-              '<div class="col__num2-col"><div class="col__num2-label">AYER</div><div class="col__num"><span class="col__empty">\u2026</span></div></div>' +
+              '<div class="col__num2-col"><div class="col__num"><span class="col__empty">\u2026</span></div></div>' +
+              '<div class="col__num2-col"><div class="col__num"><span class="col__empty">\u2026</span></div></div>' +
             '</div>' +
           '</div>';
       } else {
+        rowsHtml += '<div class="col__num2-head"><div class="col__num2-head-item">HOY</div><div class="col__num2-head-item">AYER</div></div>';
         for (var si = 0; si < card.rows.length; si++) {
           var rr = card.rows[si];
           var nToday = rr.today ? esc(rr.today) : '<span class="col__empty">\u2026</span>';
@@ -556,11 +577,9 @@ function renderTriplesPage() {
               '<div class="col__time">' + esc(slotTo12h(rr.time)) + '</div>' +
               '<div class="col__num2">' +
                 '<div class="col__num2-col">' +
-                  '<div class="col__num2-label">HOY</div>' +
                   '<div class="col__num">' + nToday + '</div>' +
                 '</div>' +
                 '<div class="col__num2-col">' +
-                  '<div class="col__num2-label">AYER</div>' +
                   '<div class="col__num">' + nYday + '</div>' +
                 '</div>' +
               '</div>' +
