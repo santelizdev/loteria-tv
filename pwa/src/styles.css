@@ -218,24 +218,72 @@ html, body {
 
 .col__group-title {
   font-weight: 900;
-  font-size: 13px;
+  font-size: 12px;
   text-align: center;
   color: #1a2f63;
   margin: 0 0 6px 0;
+  letter-spacing: 0.3px;
 }
 
-.col__group-row {
+.col__abc-head,
+.col__abc-row {
   display: grid;
-  grid-template-columns: 90px 1fr;
+  grid-template-columns: 72px 1fr 1fr 1fr;
   align-items: center;
   justify-items: center;
-  gap: 8px;
+  gap: 4px;
+}
+
+.col__abc-head {
+  margin-bottom: 3px;
+}
+
+.col__abc-time-head,
+.col__abc-col-head {
+  width: 100%;
+  text-align: center;
+  border-radius: 4px;
+  background: linear-gradient(180deg, var(--head-accent), var(--head-accent-2));
+  color: #f3f7ff;
+  font-size: 10px;
+  font-weight: 800;
   padding: 2px 4px;
 }
 
-.col__group-row .col__num {
-  font-size: 24px;
-  min-height: 34px;
+.col__abc-row {
+  padding: 2px 0;
+}
+
+.col__abc-time {
+  width: 100%;
+  text-align: center;
+  border-radius: 4px;
+  background: linear-gradient(180deg, var(--head-accent), var(--head-accent-2));
+  color: #f3f7ff;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 2px;
+  white-space: nowrap;
+}
+
+.col__abc-cell {
+  width: 100%;
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  border: 1px solid #d6e2f6;
+  background: #f8fbff;
+  color: #1a2340;
+  font-size: 18px;
+  font-weight: 900;
+  padding: 0 2px;
+}
+
+.col__abc-head--ac,
+.col__abc-row--ac {
+  grid-template-columns: 72px 1fr 1fr;
 }
 
 .col__row--dual {
@@ -436,6 +484,12 @@ body.theme-dark .col__group {
 
 body.theme-dark .col__group-title {
   color: #dce9ff;
+}
+
+body.theme-dark .col__abc-cell {
+  color: #f7fbff;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.14);
 }
 
 body.theme-dark .col__num2-label {

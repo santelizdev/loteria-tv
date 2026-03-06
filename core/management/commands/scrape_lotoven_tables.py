@@ -35,6 +35,14 @@ TRIPLE_TACHIRA_URL = "https://lotoven.com/loteria/tripletachira/resultados/"
 TRIPLE_CALIENTE_URL = "https://lotoven.com/loteria/triplecaliente/resultados/"
 TRIPLE_ZAMORANO_URL = "https://lotoven.com/loteria/triplezamorano/resultados/"
 
+EXPECTED_TRIPLE_ABC_TIMES = {
+    "Triple Caracas": {(13, 0), (16, 30), (19, 10)},
+    "Triple Caliente": {(13, 0), (16, 30), (19, 10)},
+    "Triple Tachira": {(13, 15), (16, 45), (22, 0)},
+    "Triple Zamorano": {(10, 0), (12, 0), (14, 0)},
+}
+EXPECTED_TRIPLE_CHANCE_TIMES = {(13, 0), (16, 0), (19, 0)}
+
 
 @dataclass(frozen=True)
 class ProviderSpec:
@@ -140,6 +148,16 @@ def _save_result(*, provider: Provider, draw_date, draw_time: time, winning_numb
     )
 
 
+def _cleanup_unexpected_times(provider: Provider, draw_date, expected_hhmm: set[tuple[int, int]]) -> None:
+    if not expected_hhmm:
+        return
+    allowed = [time(h, m) for h, m in sorted(expected_hhmm)]
+    CurrentResult.objects.filter(
+        provider=provider,
+        draw_date=draw_date,
+    ).exclude(draw_time__in=allowed).delete()
+
+
 def _get_or_create_provider(name: str, source_url: str) -> Provider:
     provider, _ = Provider.objects.get_or_create(
         name=name,
@@ -176,7 +194,7 @@ def _parse_table_simple(block) -> list[Tuple[time, str, Optional[dict]]]:
     return out
 
 
-def _parse_triple_chance(block) -> list[Tuple[time, str, Optional[dict]]]:
+def _parse_triple_chance(block) -> list[Tuple[str, time, str, Optional[dict]]]:
     table = block.select_one("table#resultados") or block.select_one("table")
     if not table:
         return []
@@ -186,37 +204,34 @@ def _parse_triple_chance(block) -> list[Tuple[time, str, Optional[dict]]]:
         return []
 
     times = rows[0]
-    triples = rows[1]
-    series = rows[2] if len(rows) >= 3 else []
-    extra2 = rows[3] if len(rows) >= 4 else []
+    row_a = rows[1] if len(rows) >= 2 else []
+    row_b = rows[2] if len(rows) >= 3 else []
+    row_c = rows[3] if len(rows) >= 4 else []
 
-    out: list[Tuple[time, str, Optional[dict]]] = []
+    out: list[Tuple[str, time, str, Optional[dict]]] = []
 
-    for idx, t_raw, triple_raw in _iter_pairs(times, triples):
+    for idx, t_raw, a_raw in _iter_pairs(times, row_a):
         t = _parse_time_hhmm(t_raw)
         if not t:
             continue
+        a = _clean(a_raw)
+        if a:
+            out.append(("A", t, a, {"grupo": "A"}))
 
-        triple = _clean(triple_raw)
-        if not triple:
-            continue
+        if idx < len(row_b):
+            b = _clean(row_b[idx])
+            if b:
+                out.append(("B", t, b, {"grupo": "B"}))
 
-        extra: dict = {}
-
-        if idx < len(series):
-            v = _clean(series[idx])
-            if v:
-                extra["serie"] = v
-
-        if idx < len(extra2):
-            cell_text = _clean(extra2[idx])
-            num2, signo = _split_number_and_signo(cell_text)
-            if num2 and num2.isdigit():
-                extra["extra_num"] = num2
-            if signo:
-                extra["signo"] = signo
-
-        out.append((t, triple, extra or None))
+        if idx < len(row_c):
+            c_raw = _clean(row_c[idx])
+            c_num, c_signo = _split_number_and_signo(c_raw)
+            c_num = _clean(c_num)
+            if c_num:
+                c_extra = {"grupo": "C"}
+                if c_signo:
+                    c_extra["signo"] = c_signo
+                out.append(("C", t, c_num, c_extra))
 
     return out
 
@@ -269,6 +284,30 @@ def _parse_triple_abc(block) -> list[Tuple[str, time, str, Optional[dict]]]:
             out.append((triple_group, t, num, extra or None))
 
     return out
+
+
+def _filter_expected_triple_abc_times(
+    provider_name: str,
+    rows: list[Tuple[str, time, str, Optional[dict]]],
+) -> list[Tuple[str, time, str, Optional[dict]]]:
+    expected = EXPECTED_TRIPLE_ABC_TIMES.get(provider_name)
+    if not expected:
+        return rows
+    filtered: list[Tuple[str, time, str, Optional[dict]]] = []
+    for grp, t, num, extra in rows:
+        if (t.hour, t.minute) in expected:
+            filtered.append((grp, t, num, extra))
+    return filtered
+
+
+def _filter_expected_triple_chance_times(
+    rows: list[Tuple[str, time, str, Optional[dict]]],
+) -> list[Tuple[str, time, str, Optional[dict]]]:
+    filtered: list[Tuple[str, time, str, Optional[dict]]] = []
+    for grp, t, num, extra in rows:
+        if (t.hour, t.minute) in EXPECTED_TRIPLE_CHANCE_TIMES:
+            filtered.append((grp, t, num, extra))
+    return filtered
 
 
 class Command(BaseCommand):
@@ -332,22 +371,12 @@ class Command(BaseCommand):
                         total_saved += 1
                 elif spec.kind == "triple_chance":
                     parsed = _parse_triple_chance(block)
-                    provider = _get_or_create_provider(spec.name, spec.source_url)
-                    for t, winning_number, extra in parsed:
-                        _save_result(
-                            provider=provider,
-                            draw_date=draw_date,
-                            draw_time=t,
-                            winning_number=winning_number,
-                            extra=extra,
-                        )
-                        total_saved += 1
-                        if extra and extra.get("signo"):
-                            total_with_signo += 1
-                elif spec.kind == "triple_abc":
-                    parsed = _parse_triple_abc(block)
+                    parsed = _filter_expected_triple_chance_times(parsed)
+                    chance_providers = {}
                     for group, t, winning_number, extra in parsed:
                         provider = _get_or_create_provider(f"{spec.name} {group}", spec.source_url)
+                        if provider.name not in chance_providers:
+                            chance_providers[provider.name] = provider
                         _save_result(
                             provider=provider,
                             draw_date=draw_date,
@@ -358,6 +387,30 @@ class Command(BaseCommand):
                         total_saved += 1
                         if extra and extra.get("signo"):
                             total_with_signo += 1
+                    for _, p in chance_providers.items():
+                        _cleanup_unexpected_times(p, draw_date, EXPECTED_TRIPLE_CHANCE_TIMES)
+                elif spec.kind == "triple_abc":
+                    parsed = _parse_triple_abc(block)
+                    parsed = _filter_expected_triple_abc_times(spec.name, parsed)
+                    expected_abc = EXPECTED_TRIPLE_ABC_TIMES.get(spec.name)
+                    abc_providers = {}
+                    for group, t, winning_number, extra in parsed:
+                        provider = _get_or_create_provider(f"{spec.name} {group}", spec.source_url)
+                        if provider.name not in abc_providers:
+                            abc_providers[provider.name] = provider
+                        _save_result(
+                            provider=provider,
+                            draw_date=draw_date,
+                            draw_time=t,
+                            winning_number=winning_number,
+                            extra=extra,
+                        )
+                        total_saved += 1
+                        if extra and extra.get("signo"):
+                            total_with_signo += 1
+                    if expected_abc:
+                        for _, p in abc_providers.items():
+                            _cleanup_unexpected_times(p, draw_date, expected_abc)
                 else:
                     parsed = []
 
@@ -365,6 +418,8 @@ class Command(BaseCommand):
                     uls = len(block.select("ul.plan-invest-limit"))
                     signo_count = 0
                     if spec.kind == "triple_abc":
+                        signo_count = sum(1 for _, _, _, e in parsed if e and e.get("signo"))
+                    elif spec.kind == "triple_chance":
                         signo_count = sum(1 for _, _, _, e in parsed if e and e.get("signo"))
                     else:
                         signo_count = sum(1 for _, _, e in parsed if e and e.get("signo"))

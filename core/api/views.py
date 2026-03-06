@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import random
 import string
-from datetime import datetime
-from typing import Optional
+from datetime import date, datetime
+from typing import Any, Dict, Optional, Union
 
 from django.conf import settings
 from django.db.models import Max
@@ -27,12 +27,12 @@ from core.services.device_service import DeviceService
 
 
 # -----------------------------------------------------------------------------
-# Helpers cache-control (CRÍTICO para que NO se quede pegado a las 12pm)
+# Helpers cache-control (CRÍTICO para que NO se quede pegado a respuestas viejas)
 # -----------------------------------------------------------------------------
 def _apply_no_cache_headers(resp: Response) -> Response:
     """
     Fuerza a que Nginx/CDN/Browser NO cacheen el response.
-    Esto ataca el síntoma principal: respuesta vieja sirviéndose por horas.
+    Aun cuando Redis esté habilitado, esto evita caches externos agresivos.
     """
     resp["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     resp["Pragma"] = "no-cache"
@@ -55,7 +55,13 @@ def _format_time_12h(value) -> str:
     return value.strftime("%I:%M %p")
 
 
-def _parse_date(value: Optional[str]):
+def _parse_date(value: Optional[str]) -> Union[date, None, str]:
+    """
+    Retorna:
+    - date si parsea
+    - None si no viene value
+    - "INVALID" si viene value pero no cumple formato
+    """
     if not value:
         return None
     try:
@@ -64,7 +70,13 @@ def _parse_date(value: Optional[str]):
         return "INVALID"
 
 
-def _resolve_target_date_for_triples():
+def _resolve_target_date_for_triples() -> Optional[date]:
+    """
+    Preferencia:
+    1) Hoy si existe en CurrentResult
+    2) Última fecha en CurrentResult
+    3) Última fecha en ResultArchive
+    """
     today = timezone.localdate()
 
     if CurrentResult.objects.filter(draw_date=today).exists():
@@ -78,7 +90,13 @@ def _resolve_target_date_for_triples():
     return last_archive
 
 
-def _resolve_target_date_for_animalitos():
+def _resolve_target_date_for_animalitos() -> Optional[date]:
+    """
+    Preferencia:
+    1) Hoy si existe en AnimalitoResult
+    2) Última fecha en AnimalitoResult
+    3) Última fecha en AnimalitoArchive
+    """
     today = timezone.localdate()
 
     if AnimalitoResult.objects.filter(draw_date=today).exists():
@@ -99,7 +117,63 @@ def get_client_ip(request) -> str:
     return (request.META.get("REMOTE_ADDR") or "").strip()
 
 
+# -----------------------------------------------------------------------------
+# Serializers (prolijidad + estabilidad de contrato)
+# -----------------------------------------------------------------------------
+def _extract_signo(extra: Any) -> str:
+    """
+    Extrae extra['signo'] si existe y es dict.
+    Devuelve "" si no aplica. Nunca levanta excepción.
+    """
+    if not extra or not isinstance(extra, dict):
+        return ""
+    return (extra.get("signo") or "").strip()
+
+
+def _serialize_triple_result(r) -> Dict[str, str]:
+    """
+    Contrato legacy para TVs:
+      { "provider": str, "time": "HH:MM AM/PM", "number": str, "image": "" }
+
+    Importante:
+    - Si r.extra.signo existe => number = "<winning_number> <signo>"
+    - NO se agregan campos nuevos.
+    """
+    winning = (r.winning_number or "").strip()
+    signo = _extract_signo(getattr(r, "extra", None))
+
+    number = f"{winning} {signo}".strip() if signo else winning
+
+    return {
+        "provider": r.provider.name,
+        "time": _format_time_12h(r.draw_time),
+        "number": number,
+        "image": r.image_url or "",
+    }
+
+
+def _serialize_animalito_result(r) -> Dict[str, str]:
+    """
+    Contrato legacy animalitos:
+      { "provider": str, "time": "HH:MM AM/PM", "number": str, "animal": str, "image": str }
+    """
+    return {
+        "provider": r.provider.name,
+        "time": _format_time_12h(r.draw_time),
+        "number": str(r.animal_number),
+        "animal": r.animal_name or "",
+        "image": r.animal_image_url or "",
+    }
+
+
+# -----------------------------------------------------------------------------
+# API Views
+# -----------------------------------------------------------------------------
 class CurrentResultsAPIView(APIView):
+    """
+    /api/results/
+    Retorna triples. Para providers con signo zodiacal, el signo se embebe en number.
+    """
     authentication_classes = []
     permission_classes = []
 
@@ -161,15 +235,7 @@ class CurrentResultsAPIView(APIView):
                 .order_by("provider__name", "draw_time")
             )
 
-        data = [
-            {
-                "provider": r.provider.name,
-                "time": _format_time_12h(r.draw_time),
-                "number": r.winning_number,
-                "image": r.image_url or "",
-            }
-            for r in qs
-        ]
+        data = [_serialize_triple_result(r) for r in qs]
 
         if not bypass_cache and ttl > 0:
             DeviceRedisService.set_cache(cache_key, data, ttl_seconds=ttl)
@@ -178,6 +244,10 @@ class CurrentResultsAPIView(APIView):
 
 
 class AnimalitosResultsAPIView(APIView):
+    """
+    /api/animalitos/
+    Retorna animalitos. No hay signo aquí (eso es de triples).
+    """
     authentication_classes = []
     permission_classes = []
 
@@ -239,16 +309,7 @@ class AnimalitosResultsAPIView(APIView):
                 .order_by("provider__name", "draw_time")
             )
 
-        data = [
-            {
-                "provider": r.provider.name,
-                "time": _format_time_12h(r.draw_time),
-                "number": str(r.animal_number),
-                "animal": r.animal_name,
-                "image": r.animal_image_url,
-            }
-            for r in qs
-        ]
+        data = [_serialize_animalito_result(r) for r in qs]
 
         if not bypass_cache and ttl > 0:
             DeviceRedisService.set_cache(cache_key, data, ttl_seconds=ttl)
@@ -290,7 +351,7 @@ class DeviceRegisterView(APIView):
             )
         )
 
-    def _generate_code(self):
+    def _generate_code(self) -> str:
         return "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
 
@@ -334,7 +395,6 @@ class DeviceStatusAPIView(APIView):
                 Response({"detail": "Invalid activation code"}, status=status.HTTP_404_NOT_FOUND)
             )
 
-        # ✅ DEFINE client_logo_url ANTES DEL RETURN
         client_logo_url = ""
         if device.branch and device.branch.client and device.branch.client.logo:
             try:
@@ -342,9 +402,13 @@ class DeviceStatusAPIView(APIView):
             except Exception:
                 client_logo_url = ""
 
-        # ✅ DEVUELVE usando la variable ya definida
-        return _apply_no_cache_headers(Response({
-            "is_active": bool(device.is_active and device.branch_id),
-            "branch_id": device.branch_id,
-            "client_logo_url": client_logo_url,
-        }))
+        return _apply_no_cache_headers(
+            Response(
+                {
+                    "is_active": bool(device.is_active and device.branch_id),
+                    "branch_id": device.branch_id,
+                    "client_logo_url": client_logo_url,
+                },
+                status=status.HTTP_200_OK,
+            )
+        )

@@ -67,6 +67,32 @@ function timeToHourSlot(timeStr) {
   return (hh < 10 ? "0" : "") + hh + ":00";
 }
 
+function timeToMinuteSlot(timeStr) {
+  var s = String(timeStr || "").trim();
+  if (!s) return null;
+
+  var match12 = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (match12) {
+    var h12 = Number(match12[1]);
+    var mm = Number(match12[2]);
+    var mer = match12[3].toUpperCase();
+    if (mer === "AM" && h12 === 12) h12 = 0;
+    if (mer === "PM" && h12 !== 12) h12 += 12;
+    if (isNaN(h12) || isNaN(mm) || h12 < 0 || h12 > 23 || mm < 0 || mm > 59) return null;
+    return (h12 < 10 ? "0" : "") + h12 + ":" + (mm < 10 ? "0" : "") + mm;
+  }
+
+  var match24 = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (match24) {
+    var h = Number(match24[1]);
+    var m = Number(match24[2]);
+    if (isNaN(h) || isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) return null;
+    return (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m;
+  }
+
+  return null;
+}
+
 function chunk(arr, size) {
   var out = [];
   for (var i = 0; i < arr.length; i += size) {
@@ -148,7 +174,7 @@ function normalizeTriples(raw) {
   for (var i = 0; i < list.length; i++) {
     var r    = list[i];
     var time = (r.time !== null && r.time !== undefined) ? r.time : r.draw_time;
-    var slot = timeToHourSlot(time);
+    var slot = timeToMinuteSlot(time);
     if (!slot) continue;
     var num  = (r.number !== null && r.number !== undefined)
       ? r.number
@@ -177,21 +203,24 @@ function normalizeAnimalitos(raw) {
 }
 
 var PROVIDER_ORDER = {
-  "Triple Caracas A": 0,
-  "Triple Caracas B": 1,
-  "Triple Caracas C": 2,
-  "Triple Tachira A": 3,
-  "Triple Tachira B": 4,
-  "Triple Tachira C": 5,
-  "Triple Zulia A": 6,
-  "Triple Zulia B": 7,
-  "Triple Zulia C": 8,
-  "Triple Caliente A": 9,
-  "Triple Caliente B": 10,
-  "Triple Caliente C": 11,
-  "Triple Zamorano A": 12,
-  "Triple Zamorano B": 13,
-  "Triple Zamorano C": 14
+  "Triple Chance A": 0,
+  "Triple Chance B": 1,
+  "Triple Chance C": 2,
+  "Triple Caracas A": 3,
+  "Triple Caracas B": 4,
+  "Triple Caracas C": 5,
+  "Triple Tachira A": 6,
+  "Triple Tachira B": 7,
+  "Triple Tachira C": 8,
+  "Triple Zulia A": 9,
+  "Triple Zulia B": 10,
+  "Triple Zulia C": 11,
+  "Triple Caliente A": 12,
+  "Triple Caliente B": 13,
+  "Triple Caliente C": 14,
+  "Triple Zamorano A": 15,
+  "Triple Zamorano B": 16,
+  "Triple Zamorano C": 17
 };
 
 function computeProviders(rows) {
@@ -214,12 +243,55 @@ function computeProviders(rows) {
 }
 
 function parseTripleGroupProvider(name) {
-  var m = String(name || "").match(/^(.*)\s([ABC])$/);
+  var normalized = String(name || "").replace(/\s+/g, " ").trim();
+  var m = normalized.match(/^(.*)\s([ABC])$/);
   if (!m) return null;
   var base = String(m[1] || "").trim();
   var group = String(m[2] || "").toUpperCase();
   if (!base || (group !== "A" && group !== "B" && group !== "C")) return null;
   return { base: base, group: group };
+}
+
+function groupColumnsForProvider(provider) {
+  if (provider === "Triple Zamorano") return ["A", "C"];
+  return ["A", "B", "C"];
+}
+
+function groupedSlotsForProvider(provider) {
+  if (provider === "Triple Caracas" || provider === "Triple Caliente") {
+    return ["13:00", "16:30", "19:10"];
+  }
+  if (provider === "Triple Tachira") {
+    return ["13:15", "16:45", "22:00"];
+  }
+  if (provider === "Triple Zamorano") {
+    return ["10:00", "12:00", "14:00"];
+  }
+  if (provider === "Triple Chance") {
+    return ["13:00", "16:00", "19:00"];
+  }
+  if (provider === "Triple Zulia") {
+    return ["12:45", "16:45", "19:05"];
+  }
+  return ["10:00", "13:00", "19:00"];
+}
+
+function _timeToMinutes(hhmm) {
+  var p = String(hhmm || "").split(":");
+  var h = Number(p[0]);
+  var m = Number(p[1]);
+  if (isNaN(h) || isNaN(m)) return -1;
+  return (h * 60) + m;
+}
+
+function mapToGroupedSlot(provider, slot) {
+  var slots = groupedSlotsForProvider(provider);
+  var src = String(slot || "");
+  if (!src || !slots.length) return "";
+  for (var i = 0; i < slots.length; i++) {
+    if (slots[i] === src) return slots[i];
+  }
+  return "";
 }
 
 function buildTripleCards(todayRows, yesterdayRows) {
@@ -229,7 +301,8 @@ function buildTripleCards(todayRows, yesterdayRows) {
   var i;
 
   function isGroupedBase(base) {
-    return base === "Triple Caracas" ||
+    return base === "Triple Chance" ||
+      base === "Triple Caracas" ||
       base === "Triple Tachira" ||
       base === "Triple Zulia" ||
       base === "Triple Caliente" ||
@@ -239,12 +312,13 @@ function buildTripleCards(todayRows, yesterdayRows) {
   function pushGrouped(base, group, source, row) {
     if (!grouped[base]) {
       grouped[base] = {
-        A: { today: [], yesterday: [] },
-        B: { today: [], yesterday: [] },
-        C: { today: [], yesterday: [] }
+        today: { A: {}, B: {}, C: {} },
+        yesterday: { A: {}, B: {}, C: {} }
       };
     }
-    grouped[base][group][source].push({ time: row.time, number: row.number });
+    var mapped = mapToGroupedSlot(base, row.time);
+    if (!mapped) return;
+    grouped[base][source][group][mapped] = row.number;
   }
 
   function ingest(rows, source) {
@@ -264,12 +338,6 @@ function buildTripleCards(todayRows, yesterdayRows) {
   ingest(todayRows || [], "today");
   ingest(yesterdayRows || [], "yesterday");
 
-  function sortRowsByTime(arr) {
-    return arr.sort(function (a, b) {
-      return String(a.time).localeCompare(String(b.time));
-    });
-  }
-
   function rowsByTimeMap(arr) {
     var m = {};
     for (var j = 0; j < arr.length; j++) m[arr[j].time] = arr[j].number;
@@ -277,20 +345,18 @@ function buildTripleCards(todayRows, yesterdayRows) {
   }
 
   var cards = [];
-  var basesPriority = ["Triple Caracas", "Triple Tachira", "Triple Zulia", "Triple Caliente", "Triple Zamorano"];
+  var basesPriority = ["Triple Chance", "Triple Caracas", "Triple Tachira", "Triple Zulia", "Triple Caliente", "Triple Zamorano"];
   for (i = 0; i < basesPriority.length; i++) {
     var bp = basesPriority[i];
     if (!grouped[bp]) continue;
-    var g = grouped[bp];
-    var finalGroups = { A: [], B: [], C: [] };
-    var labels = ["A", "B", "C"];
-    for (var li = 0; li < labels.length; li++) {
-      var gl = labels[li];
-      var tRows = sortRowsByTime(g[gl].today);
-      var yRows = sortRowsByTime(g[gl].yesterday);
-      finalGroups[gl] = tRows.length ? tRows : yRows; // fallback a AYER si HOY viene vacío
-    }
-    cards.push({ kind: "grouped", provider: bp, groups: finalGroups });
+    cards.push({
+      kind: "grouped",
+      provider: bp,
+      columns: groupColumnsForProvider(bp),
+      slots: groupedSlotsForProvider(bp),
+      today: grouped[bp].today,
+      yesterday: grouped[bp].yesterday
+    });
     delete grouped[bp];
   }
 
@@ -299,16 +365,14 @@ function buildTripleCards(todayRows, yesterdayRows) {
   extraBases.sort(function (a, b) { return a.localeCompare(b); });
   for (i = 0; i < extraBases.length; i++) {
     var eb = extraBases[i];
-    var eg = grouped[eb];
-    var finalExtra = { A: [], B: [], C: [] };
-    var exlabels = ["A", "B", "C"];
-    for (var li2 = 0; li2 < exlabels.length; li2++) {
-      var gl2 = exlabels[li2];
-      var tRows2 = sortRowsByTime(eg[gl2].today);
-      var yRows2 = sortRowsByTime(eg[gl2].yesterday);
-      finalExtra[gl2] = tRows2.length ? tRows2 : yRows2;
-    }
-    cards.push({ kind: "grouped", provider: eb, groups: finalExtra });
+    cards.push({
+      kind: "grouped",
+      provider: eb,
+      columns: groupColumnsForProvider(eb),
+      slots: groupedSlotsForProvider(eb),
+      today: grouped[eb].today,
+      yesterday: grouped[eb].yesterday
+    });
   }
 
   var singleProvidersMap = {};
@@ -321,8 +385,12 @@ function buildTripleCards(todayRows, yesterdayRows) {
 
   for (i = 0; i < singleProviders.length; i++) {
     var sp = singleProviders[i];
-    var todayList = sortRowsByTime(singleToday[sp] || []);
-    var ydayList = sortRowsByTime(singleYesterday[sp] || []);
+    var todayList = (singleToday[sp] || []).sort(function (a, b) {
+      return String(a.time).localeCompare(String(b.time));
+    });
+    var ydayList = (singleYesterday[sp] || []).sort(function (a, b) {
+      return String(a.time).localeCompare(String(b.time));
+    });
     var tm = rowsByTimeMap(todayList);
     var ym = rowsByTimeMap(ydayList);
 
@@ -427,33 +495,39 @@ function renderTriplesPage() {
   for (var gi = 0; gi < group.length; gi++) {
     var card = group[gi];
     if (card.kind === "grouped") {
-      var gnames = ["A", "B", "C"];
-      var bodyHtml = "";
-      for (var gj = 0; gj < gnames.length; gj++) {
-        var gname = gnames[gj];
-        var grows = card.groups[gname] || [];
-        var gRowsHtml = "";
-        if (!grows.length) {
-          gRowsHtml =
-            '<div class="col__group-row">' +
-              '<div class="col__time">\u2026</div>' +
-              '<div class="col__num"><span class="col__empty">\u2026</span></div>' +
-            '</div>';
-        } else {
-          for (var gr = 0; gr < grows.length; gr++) {
-            gRowsHtml +=
-              '<div class="col__group-row">' +
-                '<div class="col__time">' + esc(slotTo12h(grows[gr].time)) + '</div>' +
-                '<div class="col__num">' + esc(grows[gr].number) + '</div>' +
-              '</div>';
+      var cols = card.columns;
+      var slots = card.slots;
+
+      function renderGroupedSection(label, sourceMap) {
+        var acClass = cols.length === 2 ? " col__abc-head--ac" : "";
+        var rowAcClass = cols.length === 2 ? " col__abc-row--ac" : "";
+        var head = '<div class="col__abc-head' + acClass + '"><div class="col__abc-time-head">HORA</div>';
+        for (var hc = 0; hc < cols.length; hc++) head += '<div class="col__abc-col-head">' + cols[hc] + '</div>';
+        head += '</div>';
+
+        var rows2 = "";
+        for (var rs = 0; rs < slots.length; rs++) {
+          var tm = slots[rs];
+          rows2 += '<div class="col__abc-row' + rowAcClass + '"><div class="col__abc-time">' + esc(slotTo12h(tm)) + '</div>';
+          for (var cc = 0; cc < cols.length; cc++) {
+            var c = cols[cc];
+            var v = (sourceMap && sourceMap[c] && sourceMap[c][tm]) ? sourceMap[c][tm] : "";
+            rows2 += '<div class="col__abc-cell">' + (v ? esc(v) : '<span class="col__empty">\u2026</span>') + '</div>';
           }
+          rows2 += '</div>';
         }
-        bodyHtml +=
+        return (
           '<section class="col__group">' +
-            '<div class="col__group-title">TRIPLE ' + gname + '</div>' +
-            gRowsHtml +
-          '</section>';
+            '<div class="col__group-title">RESULTADOS ' + label + '</div>' +
+            head + rows2 +
+          '</section>'
+        );
       }
+
+      var bodyHtml = "";
+      bodyHtml += renderGroupedSection("HOY", card.today);
+      bodyHtml += renderGroupedSection("AYER", card.yesterday);
+
       html +=
         '<article class="col col--grouped">' +
           '<div class="col__head"><div class="col__title">' + esc(card.provider) + '</div></div>' +
