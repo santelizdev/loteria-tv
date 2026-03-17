@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0020_alter_branch_name'),
+        ('core', '0019_currentresult_extra_resultarchive_extra'),
     ]
 
     operations = [
