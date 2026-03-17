@@ -19,7 +19,8 @@
   const API_BASE = (localStorage.getItem("pwa_api_base") || defaultApiBase).trim();
   const WS_BASE = (localStorage.getItem("pwa_ws_base") || defaultWsBase).trim();
 
-  // Rollout seguro: mantener vacio en produccion hasta elegir CODs piloto.
+  // La allowlist se conserva por si luego queremos acotar o depurar un subconjunto,
+  // pero por defecto la telemetria queda activa en produccion.
   const defaultTelemetryAllowedCodes = [];
   const queryTelemetryCodes = (params.get("telemetry_codes") || "").trim();
   if (queryTelemetryCodes) {
@@ -34,11 +35,11 @@
     .filter(Boolean);
 
   const queryTelemetry = (params.get("telemetry") || "").trim().toLowerCase();
-  const TELEMETRY_ENABLED =
-    isLocal ||
-    queryTelemetry === "1" ||
-    queryTelemetry === "true" ||
-    TELEMETRY_ALLOWED_CODES.length > 0;
+  const telemetryExplicitlyDisabled =
+    queryTelemetry === "0" ||
+    queryTelemetry === "false" ||
+    queryTelemetry === "off";
+  const TELEMETRY_ENABLED = !telemetryExplicitlyDisabled;
 
   // Puedes setear el logo por entorno sin pisar API/WS
   const CLIENT_LOGO = isLocal ? "" : "https://.../logo.png";
