@@ -3,20 +3,19 @@
 # FILE: config/settings.py
 # =========================
 import os
-from pathlib import Path
 from urllib.parse import urlparse
 
 import dj_database_url
 from celery.schedules import crontab
-from dotenv import load_dotenv
+
+from config.env import BASE_DIR, load_project_env
 
 USE_X_FORWARDED_HOST = True
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 RESULTS_CACHE_TTL_SECONDS = 0  # 0 para desactivar cache totalmente
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / ".env")
+load_project_env()
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-insecure-key")
 DEBUG = os.getenv("DJANGO_DEBUG", "1") == "1"
@@ -143,4 +142,3 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute=10, hour=0),
     },
 }
-

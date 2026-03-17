@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import timedelta
 from django.core.management.base import BaseCommand
+from django.db import OperationalError
 from django.db import connection, transaction
 from django.utils import timezone
 
+from core.management.command_helpers import raise_database_connection_help
 from core.models import (
     CurrentResult,
     ResultArchive,
@@ -32,11 +34,17 @@ class Command(BaseCommand):
             action="store_true",
             help="Run VACUUM after deletions (SQLite only).",
         )
+        parser.add_argument(
+            "--skip-safety-checks",
+            action="store_true",
+            help="Skip safety checks that require yesterday rows to exist in archive tables.",
+        )
 
     def handle(self, *args, **options):
         dry_run: bool = options["dry_run"]
         keep_archive_days: int = options["keep_archive_days"]
         vacuum: bool = options["vacuum"]
+        skip_safety_checks: bool = options["skip_safety_checks"]
 
         if keep_archive_days < 1:
             raise ValueError("--keep-archive-days must be >= 1")
@@ -47,18 +55,34 @@ class Command(BaseCommand):
         archive_end = today - timedelta(days=1)
 
         self.stdout.write(f"today={today} | keep archive range: {archive_start}..{archive_end}")
-        self.stdout.write(f"dry_run={dry_run} vacuum={vacuum}")
+        self.stdout.write(f"dry_run={dry_run} vacuum={vacuum} skip_safety_checks={skip_safety_checks}")
 
-        # Compute what would be deleted
-        to_delete = [
-            ("CurrentResult", CurrentResult.objects.exclude(draw_date=today)),
-            ("AnimalitoResult", AnimalitoResult.objects.exclude(draw_date=today)),
-            ("ResultArchive", ResultArchive.objects.exclude(draw_date__range=(archive_start, archive_end))),
-            ("AnimalitoArchive", AnimalitoArchive.objects.exclude(draw_date__range=(archive_start, archive_end))),
-        ]
+        try:
+            if not skip_safety_checks:
+                archive_triples_yesterday = ResultArchive.objects.filter(draw_date=archive_end).count()
+                archive_animalitos_yesterday = AnimalitoArchive.objects.filter(draw_date=archive_end).count()
 
-        for name, qs in to_delete:
-            self.stdout.write(f"{name}: would delete {qs.count()} rows")
+                if archive_triples_yesterday == 0 or archive_animalitos_yesterday == 0:
+                    message = (
+                        "SAFETY CHECK FAILED: retention aborted because archive tables do not have complete "
+                        f"yesterday data (triples={archive_triples_yesterday}, "
+                        f"animalitos={archive_animalitos_yesterday}, expected > 0)."
+                    )
+                    self.stderr.write(self.style.ERROR(message))
+                    raise SystemExit(2)
+
+            # Compute what would be deleted
+            to_delete = [
+                ("CurrentResult", CurrentResult.objects.exclude(draw_date=today)),
+                ("AnimalitoResult", AnimalitoResult.objects.exclude(draw_date=today)),
+                ("ResultArchive", ResultArchive.objects.exclude(draw_date__range=(archive_start, archive_end))),
+                ("AnimalitoArchive", AnimalitoArchive.objects.exclude(draw_date__range=(archive_start, archive_end))),
+            ]
+
+            for name, qs in to_delete:
+                self.stdout.write(f"{name}: would delete {qs.count()} rows")
+        except OperationalError as exc:
+            raise_database_connection_help(command_name="enforce_retention --dry-run", exc=exc)
 
         if dry_run:
             self.stdout.write(self.style.WARNING("Dry-run: no changes applied."))

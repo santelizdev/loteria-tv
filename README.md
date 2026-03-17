@@ -50,7 +50,27 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### 2) Separar entorno local de Docker
+El proyecto ahora carga variables en este orden:
+
+- Variables reales del sistema o del proceso.
+- `.env.local` para tu host local.
+- `.env` como base compartida.
+
+Docker sigue usando `.env.docker` vía `docker compose`, así que tu `.env.local` no interfiere con los contenedores.
+
+Ejemplo rápido para correr comandos Django desde tu host:
+
+```bash
+python manage.py check_ops_health --strict
+```
+
 ## Diagnóstico remoto Smart TV
 
 Se añadió un checklist operativo para validar incidencias de ciclo/tránsito de pantallas en PWA (Venezuela): `pwa/TV_VENEZUELA_DIAGNOSTICO.md`.
 
+
+
+## Seguridad y QA
+
+Checklist operativo documentado en `docs/security_qa_checklist.md`.
