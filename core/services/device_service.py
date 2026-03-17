@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from core.models import Device
 from core.services.device_redis_service import DeviceRedisService
+from core.services.device_telemetry_service import DeviceTelemetryService
 
 
 class DeviceService:
@@ -58,6 +59,7 @@ class DeviceService:
             ip_address=ip_address,
             branch_id=device.branch_id,
         )
+        DeviceTelemetryService.record_heartbeat(device=device, ip_address=ip_address)
 
         # last_seen en DB solo cada X minutos
         if DeviceService._should_update_last_seen_db(device.activation_code):

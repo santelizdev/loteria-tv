@@ -20,10 +20,12 @@ from core.models import (
     AnimalitoResult,
     CurrentResult,
     Device,
+    DeviceTelemetryEvent,
     ResultArchive,
 )
 from core.services.device_redis_service import DeviceRedisService
 from core.services.device_service import DeviceService
+from core.services.device_telemetry_service import DeviceTelemetryService
 
 
 # -----------------------------------------------------------------------------
@@ -115,6 +117,18 @@ def get_client_ip(request) -> str:
     if xff:
         return xff.split(",")[0].strip()
     return (request.META.get("REMOTE_ADDR") or "").strip()
+
+
+def _normalize_telemetry_message(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_telemetry_metadata(value: Any) -> Dict[str, Any]:
+    if value in (None, ""):
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("metadata must be an object")
+    return value
 
 
 # -----------------------------------------------------------------------------
@@ -375,6 +389,77 @@ class DeviceHeartbeatAPIView(APIView):
             return _apply_no_cache_headers(Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN))
 
         return _apply_no_cache_headers(Response({"status": "ok", "online": True}, status=status.HTTP_200_OK))
+
+
+class DeviceTelemetryAPIView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request):
+        device_id = request.data.get("device_id")
+        activation_code = request.data.get("code")
+        event_type = str(request.data.get("event_type") or "").strip().upper()
+        message = _normalize_telemetry_message(request.data.get("message"))
+        ip_address = get_client_ip(request)
+
+        if not device_id or not activation_code:
+            return _apply_no_cache_headers(
+                Response({"detail": "Missing credentials"}, status=status.HTTP_400_BAD_REQUEST)
+            )
+
+        if event_type not in DeviceTelemetryEvent.EventType.values:
+            return _apply_no_cache_headers(
+                Response(
+                    {
+                        "detail": "Invalid event_type",
+                        "allowed": list(DeviceTelemetryEvent.EventType.values),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            )
+
+        try:
+            metadata = _normalize_telemetry_metadata(request.data.get("metadata"))
+        except ValueError as exc:
+            return _apply_no_cache_headers(
+                Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            )
+
+        try:
+            device = DeviceService.validate_device(
+                activation_code=activation_code,
+                ip_address=ip_address,
+            )
+        except PermissionError as e:
+            return _apply_no_cache_headers(Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN))
+
+        if str(device.device_id) != str(device_id):
+            return _apply_no_cache_headers(
+                Response({"detail": "Device credentials mismatch"}, status=status.HTTP_403_FORBIDDEN)
+            )
+
+        event = DeviceTelemetryService.record_event(
+            device=device,
+            event_type=event_type,
+            ip_address=ip_address,
+            message=message,
+            metadata=metadata,
+        )
+        snapshot = device.telemetry_snapshot
+
+        return _apply_no_cache_headers(
+            Response(
+                {
+                    "status": "ok",
+                    "event_id": event.id,
+                    "event_type": event.event_type,
+                    "device": device.activation_code,
+                    "last_heartbeat_at": snapshot.last_heartbeat_at.isoformat() if snapshot.last_heartbeat_at else None,
+                    "last_ip_address": snapshot.last_ip_address,
+                },
+                status=status.HTTP_200_OK,
+            )
+        )
 
 
 class DeviceStatusAPIView(APIView):

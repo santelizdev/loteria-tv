@@ -9,6 +9,7 @@ from core.api.views import (
     DeviceRegisterView,
     DeviceHeartbeatAPIView,
     DeviceStatusAPIView,
+    DeviceTelemetryAPIView,
     AnimalitosResultsAPIView,
 )
 from django.contrib import admin
@@ -26,6 +27,7 @@ urlpatterns = [
 
     path("api/devices/register/", DeviceRegisterView.as_view()),
     path("api/devices/heartbeat/", DeviceHeartbeatAPIView.as_view()),
+    path("api/devices/telemetry/", DeviceTelemetryAPIView.as_view()),
     path("api/devices/status/", DeviceStatusAPIView.as_view(), name="device-status"),  
 ]
 
@@ -33,4 +35,3 @@ if settings.DEBUG:
         urlpatterns += staticfiles_urlpatterns()
         
         urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-
