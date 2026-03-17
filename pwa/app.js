@@ -27,6 +27,10 @@ var titleEl    = document.getElementById("resultsTitle");
 var clockEl    = document.getElementById("vzClock");
 var progressEl = document.getElementById("progressBar");
 
+function telemetry() {
+  return window.DeviceTelemetry || null;
+}
+
 // ---------- HELPERS ----------
 function esc(v) {
   return String(v !== null && v !== undefined ? v : "")
@@ -335,6 +339,18 @@ function render() {
   else renderAnimalitosGroup(state.animalitosDay);
 }
 
+function reportTelemetry(eventType, options) {
+  var client = telemetry();
+  if (!client || typeof client.send !== "function") return Promise.resolve(null);
+  return client.send(eventType, options || {});
+}
+
+function reportWebViewInfo(options) {
+  var client = telemetry();
+  if (!client || typeof client.reportWebViewInfo !== "function") return Promise.resolve(null);
+  return client.reportWebViewInfo(options || {});
+}
+
 // ---------- DATA FETCH ----------
 function getApiBase() {
   return (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE)
@@ -529,6 +545,13 @@ window.addEventListener("resultsUpdated", function (e) {
       state.deviceCode = String(code || "----").toUpperCase();
       renderDeviceCode(state.deviceCode);
       render();
+      reportTelemetry("APP_START", {
+        message: "PWA boot started",
+        metadata: { boot_stage: "activation_code_ready" },
+      });
+      reportWebViewInfo({
+        metadata: { boot_stage: "activation_code_ready" },
+      });
       deviceManager.connectSocket();
       return deviceManager.syncStatusOnce();
     })
@@ -554,9 +577,21 @@ window.addEventListener("resultsUpdated", function (e) {
       setInterval(refreshAnimalitosCaches, ANIMALITOS_REFRESH_MS);
       render();
       startRotation(ROTATION_MS);
+      reportTelemetry("LOAD_SUCCESS", {
+        message: "Initial data load completed",
+        metadata: {
+          boot_stage: "initial_render_complete",
+          triples_today_count: state.triplesTodayRows.length,
+          animalitos_today_count: state.animalitosTodayRows.length,
+        },
+      });
     })
     .catch(function (e) {
       console.error("BOOT ERROR:", e);
+      reportTelemetry("LOAD_ERROR", {
+        message: e && e.message ? e.message : String(e || "BOOT_ERROR"),
+        metadata: { boot_stage: "boot_catch" },
+      });
       if (gridEl) {
         gridEl.innerHTML = '<div style="padding:16px;">Error: ' + esc(e.message || e) + '</div>';
       }
