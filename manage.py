@@ -3,11 +3,16 @@
 import os
 import sys
 
+try:
+    from config.env import load_project_env
+except ModuleNotFoundError:
+    load_project_env = None
+
 
 def main():
-    from dotenv import load_dotenv
-    load_dotenv()
-    
+    if load_project_env:
+        load_project_env()
+
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
     try:
         from django.core.management import execute_from_command_line
@@ -15,14 +20,6 @@ def main():
         raise
     execute_from_command_line(sys.argv)
 
-try:
-    from dotenv import load_dotenv
-except ModuleNotFoundError:
-    load_dotenv = None
 
-if load_dotenv:
-    load_dotenv()
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
