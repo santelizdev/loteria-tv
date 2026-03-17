@@ -8,3 +8,5 @@ from .license import License
 from .result_archive import ResultArchive
 from .animalito_result import AnimalitoResult
 from .animalito_archive import AnimalitoArchive
+from .device_telemetry_snapshot import DeviceTelemetrySnapshot
+from .device_telemetry_event import DeviceTelemetryEvent
