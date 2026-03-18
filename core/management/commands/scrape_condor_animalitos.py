@@ -133,6 +133,7 @@ class Command(BaseCommand):
                     "animal_number": r["number"],        # Django coerces si es IntegerField
                     "animal_name": r["animal"],
                     "animal_image_url": r["image"],
+                    "provider_logo_url": provider.logo_url or "",
                 },
             )
             if was_created:

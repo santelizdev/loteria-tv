@@ -74,3 +74,28 @@ Se añadió un checklist operativo para validar incidencias de ciclo/tránsito d
 ## Seguridad y QA
 
 Checklist operativo documentado en `docs/security_qa_checklist.md`.
+
+## Monitoreo interno de scrapers
+
+El backend incluye control interno de salud para scrapers en Django Admin.
+
+Variables opcionales:
+
+- `SCRAPER_ALERT_EMAILS=ops1@dominio.com,ops2@dominio.com`
+- `SCRAPER_ALERT_USERNAMES=admin1,operaciones1`
+- `SCRAPER_ALERT_GROUPS=Administradores,Operadores`
+- `SCRAPER_ALERT_NOTIFY_COOLDOWN_MINUTES=180`
+- `DEFAULT_FROM_EMAIL=noreply@ssganador.lat`
+
+Comandos útiles:
+
+```bash
+python manage.py notify_scraper_alerts --dry-run
+python manage.py notify_scraper_alerts
+python manage.py check_ops_health --strict
+```
+
+Notas:
+
+- Todo este monitoreo es interno y solo vive en Django Admin / comandos de operación.
+- El admin de `Scraper health` resume `OK / fallo hoy / sin OK hoy / stale` y permite forzar aviso interno o resetear cooldown.

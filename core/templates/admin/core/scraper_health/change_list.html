@@ -1,0 +1,43 @@
+{% extends "admin/change_list.html" %}
+
+{% block result_list %}
+  {% if scraper_health_summary %}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:0 0 18px 0;">
+      <div style="padding:12px 14px;border-radius:12px;background:#f2f5f8;border:1px solid #dde5ec;">
+        <div style="font-size:12px;font-weight:700;color:#5f6b7a;text-transform:uppercase;">Total</div>
+        <div style="font-size:28px;font-weight:800;color:#1f2933;">{{ scraper_health_summary.total }}</div>
+      </div>
+      <div style="padding:12px 14px;border-radius:12px;background:#e8fff3;border:1px solid #c6efd8;">
+        <div style="font-size:12px;font-weight:700;color:#177245;text-transform:uppercase;">OK</div>
+        <div style="font-size:28px;font-weight:800;color:#177245;">{{ scraper_health_summary.ok }}</div>
+      </div>
+      <div style="padding:12px 14px;border-radius:12px;background:#fff0f0;border:1px solid #f1c7c7;">
+        <div style="font-size:12px;font-weight:700;color:#9d1c1c;text-transform:uppercase;">Alertas activas</div>
+        <div style="font-size:28px;font-weight:800;color:#9d1c1c;">{{ scraper_health_summary.active }}</div>
+      </div>
+      <div style="padding:12px 14px;border-radius:12px;background:#fff2e8;border:1px solid #f4d2bc;">
+        <div style="font-size:12px;font-weight:700;color:#a04300;text-transform:uppercase;">Sin OK hoy</div>
+        <div style="font-size:28px;font-weight:800;color:#a04300;">{{ scraper_health_summary.missing_today }}</div>
+      </div>
+      <div style="padding:12px 14px;border-radius:12px;background:#fff6df;border:1px solid #ebd7a2;">
+        <div style="font-size:12px;font-weight:700;color:#8a5a00;text-transform:uppercase;">Stale</div>
+        <div style="font-size:28px;font-weight:800;color:#8a5a00;">{{ scraper_health_summary.stale }}</div>
+      </div>
+      <div style="padding:12px 14px;border-radius:12px;background:#f8f5ff;border:1px solid #ddd3fb;">
+        <div style="font-size:12px;font-weight:700;color:#5f3ca3;text-transform:uppercase;">Fallo hoy</div>
+        <div style="font-size:28px;font-weight:800;color:#5f3ca3;">{{ scraper_health_summary.failed_today }}</div>
+      </div>
+    </div>
+  {% endif %}
+
+  <div style="margin:0 0 16px 0;padding:12px 14px;border-radius:12px;background:#ffffff;border:1px solid #dde5ec;">
+    <strong>Notificacion interna:</strong>
+    {% if scraper_notification_recipients %}
+      {{ scraper_notification_recipients|join:", " }}
+    {% else %}
+      sin destinatarios configurados.
+    {% endif %}
+  </div>
+
+  {{ block.super }}
+{% endblock %}

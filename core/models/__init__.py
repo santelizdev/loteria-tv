@@ -10,3 +10,4 @@ from .animalito_result import AnimalitoResult
 from .animalito_archive import AnimalitoArchive
 from .device_telemetry_snapshot import DeviceTelemetrySnapshot
 from .device_telemetry_event import DeviceTelemetryEvent
+from .scraper_health import ScraperHealth

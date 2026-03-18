@@ -13,3 +13,7 @@ from .device_telemetry_event import *  # noqa: F401,F403
 from .provider import *  # noqa: F401,F403
 from .current_result import *  # noqa: F401,F403
 from .result_archive import *  # noqa: F401,F403
+from .animalito_result import *  # noqa: F401,F403
+from .animalito_archive import *  # noqa: F401,F403
+from .transmission import *  # noqa: F401,F403
+from .scraper_health import *  # noqa: F401,F403

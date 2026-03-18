@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from core.management.command_helpers import raise_database_connection_help
 from core.models import AnimalitoArchive, AnimalitoResult, CurrentResult, ResultArchive
+from core.services.scraper_health_service import ScraperHealthService
 
 
 @dataclass
@@ -39,6 +40,11 @@ class Command(BaseCommand):
             help="Maximum allowed distinct draw_date values per table (default: 1).",
         )
         parser.add_argument(
+            "--skip-scrapers",
+            action="store_true",
+            help="Skip scraper health checks and only validate result tables.",
+        )
+        parser.add_argument(
             "--strict",
             action="store_true",
             help="Exit with non-zero status if any check fails.",
@@ -46,10 +52,12 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         max_distinct_dates = int(options["max_distinct_dates"])
+        skip_scrapers = bool(options["skip_scrapers"])
         strict = bool(options["strict"])
 
         today = timezone.localdate()
         yesterday = today - timezone.timedelta(days=1)
+        current_dt = timezone.now()
 
         failures: list[str] = []
 
@@ -97,6 +105,33 @@ class Command(BaseCommand):
             failures.append("ResultArchive has 0 rows for yesterday")
         if yesterday_archive_animalitos == 0:
             failures.append("AnimalitoArchive has 0 rows for yesterday")
+
+        if not skip_scrapers:
+            self.stdout.write("")
+            self.stdout.write("Scraper health:")
+            summary = ScraperHealthService.build_admin_summary(now=current_dt)
+            self.stdout.write(
+                "summary: "
+                f"total={summary['total']} ok={summary['ok']} active={summary['active']} "
+                f"failed_today={summary['failed_today']} missing_today={summary['missing_today']} "
+                f"stale={summary['stale']} running={summary['running']} never={summary['never']}"
+            )
+
+            for definition in ScraperHealthService.REGISTRY.values():
+                monitor = ScraperHealthService.get_or_create_monitor(definition.key)
+                alert = ScraperHealthService.get_alert(definition.key, now=current_dt)
+                alert_label = f"{alert['alert_kind']}: {alert['message']}" if alert else "OK"
+                self.stdout.write(
+                    f"{definition.key}: status={monitor.last_status} "
+                    f"last_success={monitor.last_success_at} "
+                    f"last_finished={monitor.last_finished_at} "
+                    f"failures={monitor.consecutive_failures} "
+                    f"alert={alert_label}"
+                )
+                if alert:
+                    failures.append(
+                        f"Scraper {definition.key} has active alert [{alert['alert_kind']}]: {alert['message']}"
+                    )
 
         if failures:
             for failure in failures:

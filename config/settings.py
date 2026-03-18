@@ -25,6 +25,26 @@ ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",") if not DEBUG el
 TIME_ZONE = os.getenv("DJANGO_TIME_ZONE", "America/Caracas")
 USE_TZ = True
 
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "noreply@ssganador.lat")
+SCRAPER_ALERT_EMAILS = [
+    value.strip()
+    for value in os.getenv("SCRAPER_ALERT_EMAILS", "").split(",")
+    if value.strip()
+]
+SCRAPER_ALERT_USERNAMES = [
+    value.strip()
+    for value in os.getenv("SCRAPER_ALERT_USERNAMES", "").split(",")
+    if value.strip()
+]
+SCRAPER_ALERT_GROUPS = [
+    value.strip()
+    for value in os.getenv("SCRAPER_ALERT_GROUPS", "").split(",")
+    if value.strip()
+]
+SCRAPER_ALERT_NOTIFY_COOLDOWN_MINUTES = int(
+    os.getenv("SCRAPER_ALERT_NOTIFY_COOLDOWN_MINUTES", "180")
+)
+
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
@@ -133,12 +153,24 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.scrape_triples",
         "schedule": crontab(minute=2, hour="8-22"),
     },
+    "scrape_tuazar_triples_hourly": {
+        "task": "core.tasks.scrape_tuazar_triples",
+        "schedule": crontab(minute=4, hour="8-22"),
+    },
     "scrape_animalitos_hourly": {
         "task": "core.tasks.scrape_animalitos",
         "schedule": crontab(minute=5, hour="8-22"),
     },
+    "scrape_condor_animalitos_hourly": {
+        "task": "core.tasks.scrape_condor_animalitos",
+        "schedule": crontab(minute=7, hour="8-22"),
+    },
     "archive_daily": {
         "task": "core.tasks.archive_daily",
         "schedule": crontab(minute=10, hour=0),
+    },
+    "notify_scraper_alerts": {
+        "task": "core.tasks.notify_scraper_alerts",
+        "schedule": crontab(minute="*/15"),
     },
 }

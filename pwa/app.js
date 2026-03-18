@@ -777,6 +777,30 @@ function reportWebViewInfo(options) {
   return client.reportWebViewInfo(options || {});
 }
 
+function applyStatusContext(ctx) {
+  var safe = ctx || {};
+  var logoUrl = safe.client_logo_url
+    ? safe.client_logo_url
+    : ((window.__APP_CONFIG__ && window.__APP_CONFIG__.CLIENT_LOGO)
+        ? window.__APP_CONFIG__.CLIENT_LOGO
+        : "");
+
+  setClientLogo(logoUrl);
+  console.log("status ctx:", safe);
+  console.log("client_logo_url:", safe.client_logo_url || null);
+}
+
+function refreshStatusContext() {
+  return deviceManager.fetchContextOnce()
+    .then(function (ctx) {
+      applyStatusContext(ctx);
+      return ctx;
+    })
+    .catch(function () {
+      return null;
+    });
+}
+
 // ---------- DATA FETCH ----------
 function getApiBase() {
   return (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE)
@@ -1030,17 +1054,11 @@ window.addEventListener("resultsUpdated", function (e) {
       return deviceManager.fetchContextOnce();
     })
     .then(function (ctx) {
-      var logoUrl = (ctx && ctx.client_logo_url)
-        ? ctx.client_logo_url
-        : ((window.__APP_CONFIG__ && window.__APP_CONFIG__.CLIENT_LOGO)
-            ? window.__APP_CONFIG__.CLIENT_LOGO
-            : "");
-      setClientLogo(logoUrl);
-      console.log("status ctx:", ctx);
-      console.log("client_logo_url:", (ctx && ctx.client_logo_url) ? ctx.client_logo_url : null);
+      applyStatusContext(ctx);
       return refreshTriplesCaches();
     })
     .then(function () {
+      setInterval(refreshStatusContext, 5 * 60 * 1000);
       setInterval(refreshTriplesCaches, ANIMALITOS_REFRESH_MS);
       return refreshAnimalitosCaches();
     })

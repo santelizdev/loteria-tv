@@ -13,6 +13,7 @@ from .admin_configs import (  # noqa: F401
     result_archive,
     transmission,
     animalito_result,
+    scraper_health,
 )
 
 @admin.register(AnimalitoArchive)

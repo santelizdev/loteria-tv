@@ -76,6 +76,7 @@ html, body {
 .topbar__center { display: flex; align-items: center; justify-content: center; gap: 14px; }
 .topbar__right { display: flex; align-items: center; justify-content: flex-end; }
 
+
 .title-badge {
   display: inline-flex;
   align-items: center;
