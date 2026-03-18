@@ -9,6 +9,8 @@
 var ROTATION_MS            = 40000;
 var ANIMALITOS_REFRESH_MS  = 60000;
 var ANIMALITOS_INTERVAL_MS = 40000;
+var NETWORK_TIMEOUT_MS     = 15000;
+var CACHE_PREFIX           = "loteriatv-cache-v1:";
 
 var SLOTS = (function () {
   var out = [];
@@ -152,6 +154,7 @@ var state = {
   deviceCode: "----",
   clientLogoUrl: "",
   mode: "triples",
+  lowMemoryMode: false,
 
   triplesTodayRows:     [],
   triplesYesterdayRows: [],
@@ -170,6 +173,86 @@ var state = {
 var rotationTimer = null;
 var rafTimer      = null;
 var tickStart     = 0;
+var inflightRefresh = {
+  triples: null,
+  animalitos: null
+};
+
+function storageSet(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (e) {}
+}
+
+function storageGet(key) {
+  try {
+    var raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveDatasetCache(key, rows) {
+  storageSet(CACHE_PREFIX + key, {
+    saved_at: Date.now(),
+    rows: rows || []
+  });
+}
+
+function readDatasetCache(key) {
+  var payload = storageGet(CACHE_PREFIX + key);
+  if (!payload || !payload.rows || !Array.isArray(payload.rows)) return [];
+  return payload.rows;
+}
+
+function fetchWithTimeout(url, options, timeoutMs) {
+  var opts = options || {};
+  var ms = timeoutMs || NETWORK_TIMEOUT_MS;
+
+  if (typeof AbortController === "function") {
+    var controller = new AbortController();
+    var merged = {};
+    var key;
+    for (key in opts) {
+      if (Object.prototype.hasOwnProperty.call(opts, key)) merged[key] = opts[key];
+    }
+    merged.signal = controller.signal;
+    var timer = setTimeout(function () {
+      controller.abort();
+    }, ms);
+    return fetch(url, merged).then(function (response) {
+      clearTimeout(timer);
+      return response;
+    }).catch(function (error) {
+      clearTimeout(timer);
+      throw error;
+    });
+  }
+
+  return fetch(url, opts);
+}
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.register("./service-worker.js").catch(function (err) {
+    console.warn("SW register failed:", err && err.message ? err.message : err);
+  });
+}
+
+function bindMemoryPressureHandlers() {
+  function onLowMemory(event) {
+    var detail = (event && event.detail) || {};
+    var message = String(detail.message || "LOW_MEMORY").trim();
+    state.lowMemoryMode = true;
+    console.warn("LOW_MEMORY mode enabled:", message);
+    setClientLogo("");
+    render();
+  }
+
+  window.addEventListener("appLowMemory", onLowMemory);
+  window.addEventListener("lowMemory", onLowMemory);
+}
 
 // ---------- NORMALIZERS ----------
 function normalizeTriples(raw) {
@@ -634,8 +717,10 @@ function renderAnimalitosGroup(day) {
     for (var si = 0; si < SLOTS.length; si++) {
       var t      = SLOTS[si];
       var rec    = byTime[t]; // objeto plano, NO .get()
-      var imgUrl = (rec && rec.image) ? rec.image : state.clientLogoUrl;
-      var img    = imgUrl ? '<img class="col__icon" src="' + esc(imgUrl) + '" alt="" />' : "";
+      var imgUrl = (rec && rec.image) ? rec.image : "";
+      var img    = (!state.lowMemoryMode && imgUrl)
+        ? '<img class="col__icon" src="' + esc(imgUrl) + '" alt="" loading="lazy" decoding="async" />'
+        : "";
       var animal = (rec && rec.animal)
         ? esc(rec.animal)
         : '<span class="col__empty">\u2026</span>';
@@ -718,7 +803,7 @@ function fetchTriplesByDate(dateISO) {
     || "DEV";
   var url = getApiBase() + "/api/results/?code=" +
             encodeURIComponent(code) + "&date=" + encodeURIComponent(dateISO);
-  return fetch(url, { cache: "no-store" })
+  return fetchWithTimeout(url, { cache: "no-store" }, NETWORK_TIMEOUT_MS)
     .then(function (res) {
       if (!res.ok) return [];
       return res.json().then(function (data) {
@@ -729,13 +814,30 @@ function fetchTriplesByDate(dateISO) {
 }
 
 function refreshTriplesCaches() {
-  return Promise.all([
+  if (inflightRefresh.triples) return inflightRefresh.triples;
+
+  inflightRefresh.triples = Promise.all([
     fetchTriplesByDate(getDateISO(0)),
     fetchTriplesByDate(getDateISO(-1)),
   ]).then(function (results) {
     state.triplesTodayRows     = results[0];
     state.triplesYesterdayRows = results[1];
+    saveDatasetCache("triples:today", state.triplesTodayRows);
+    saveDatasetCache("triples:yesterday", state.triplesYesterdayRows);
+    return results;
+  }).catch(function () {
+    state.triplesTodayRows = readDatasetCache("triples:today");
+    state.triplesYesterdayRows = readDatasetCache("triples:yesterday");
+    return [state.triplesTodayRows, state.triplesYesterdayRows];
+  }).then(function (results) {
+    inflightRefresh.triples = null;
+    return results;
+  }, function (error) {
+    inflightRefresh.triples = null;
+    throw error;
   });
+
+  return inflightRefresh.triples;
 }
 
 function fetchAnimalitosByDate(dateISO) {
@@ -744,7 +846,7 @@ function fetchAnimalitosByDate(dateISO) {
     || "DEV";
   var url = getApiBase() + "/api/animalitos/?code=" +
             encodeURIComponent(code) + "&date=" + encodeURIComponent(dateISO);
-  return fetch(url, { cache: "no-store" })
+  return fetchWithTimeout(url, { cache: "no-store" }, NETWORK_TIMEOUT_MS)
     .then(function (res) {
       if (!res.ok) return [];
       return res.json().then(function (data) { return normalizeAnimalitos(data); });
@@ -753,14 +855,34 @@ function fetchAnimalitosByDate(dateISO) {
 }
 
 function refreshAnimalitosCaches() {
-  return Promise.all([
+  if (inflightRefresh.animalitos) return inflightRefresh.animalitos;
+
+  inflightRefresh.animalitos = Promise.all([
     fetchAnimalitosByDate(getDateISO(0)),
     fetchAnimalitosByDate(getDateISO(-1)),
   ]).then(function (results) {
     state.animalitosTodayRows     = results[0];
     state.animalitosYesterdayRows = results[1];
     state.animalitosProviders     = computeProviders(results[0].concat(results[1]));
+    saveDatasetCache("animalitos:today", state.animalitosTodayRows);
+    saveDatasetCache("animalitos:yesterday", state.animalitosYesterdayRows);
+    return results;
+  }).catch(function () {
+    state.animalitosTodayRows = readDatasetCache("animalitos:today");
+    state.animalitosYesterdayRows = readDatasetCache("animalitos:yesterday");
+    state.animalitosProviders = computeProviders(
+      (state.animalitosTodayRows || []).concat(state.animalitosYesterdayRows || [])
+    );
+    return [state.animalitosTodayRows, state.animalitosYesterdayRows];
+  }).then(function (results) {
+    inflightRefresh.animalitos = null;
+    return results;
+  }, function (error) {
+    inflightRefresh.animalitos = null;
+    throw error;
   });
+
+  return inflightRefresh.animalitos;
 }
 
 // ---------- ROTATION ----------
@@ -868,6 +990,8 @@ window.addEventListener("resultsUpdated", function (e) {
 
 // ---------- BOOT ----------
 (function boot() {
+  registerServiceWorker();
+  bindMemoryPressureHandlers();
   initThemeToggle();
   startClock();
 
