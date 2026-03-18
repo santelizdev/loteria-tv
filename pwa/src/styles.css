@@ -443,6 +443,12 @@ html, body {
   flex: 0 0 auto;
 }
 
+.col__icon--pending {
+  object-fit: contain;
+  padding: 3px;
+  background: rgba(255,255,255,0.92);
+}
+
 /* ---------------- Footer / Progress ---------------- */
 .footer {
   height: var(--footer-h);
@@ -549,6 +555,10 @@ body.theme-dark .col__name {
 
 body.theme-dark .col__icon {
   border-color: rgba(255,255,255,0.24);
+}
+
+body.theme-dark .col__icon--pending {
+  background: rgba(255,255,255,0.08);
 }
 
 body.theme-dark .ticker {

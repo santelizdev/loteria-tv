@@ -158,13 +158,23 @@ def _serialize_animalito_result(r) -> Dict[str, str]:
     """
     Contrato legacy animalitos:
       { "provider": str, "time": "HH:MM AM/PM", "number": str, "animal": str, "image": str }
+
+    Se agregan campos opcionales de compatibilidad progresiva para la PWA:
+      - provider_logo_url
     """
+    provider_logo_url = ""
+    if getattr(r, "provider_logo_url", ""):
+        provider_logo_url = r.provider_logo_url
+    elif getattr(r, "provider", None) and getattr(r.provider, "logo_url", ""):
+        provider_logo_url = r.provider.logo_url or ""
+
     return {
-        "provider": r.provider.name,
+        "provider": (r.provider.name or "").strip(),
         "time": _format_time_12h(r.draw_time),
         "number": str(r.animal_number),
         "animal": r.animal_name or "",
         "image": r.animal_image_url or "",
+        "provider_logo_url": provider_logo_url,
     }
 
 

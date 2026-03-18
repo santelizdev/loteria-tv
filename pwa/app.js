@@ -257,7 +257,6 @@ function bindMemoryPressureHandlers() {
     var message = String(detail.message || "LOW_MEMORY").trim();
     state.lowMemoryMode = true;
     console.warn("LOW_MEMORY mode enabled:", message);
-    setClientLogo("");
     render();
   }
 
@@ -289,12 +288,17 @@ function normalizeAnimalitos(raw) {
     var r    = list[i];
     var slot = timeToHourSlot(r.time);
     if (!slot) continue;
+    var providerName = String(r.provider !== null && r.provider !== undefined ? r.provider : "").trim();
+    if (!providerName) continue;
     out.push({
-      provider: r.provider,
+      provider: providerName,
       time:     slot,
       number:   String(r.number !== null && r.number !== undefined ? r.number : "").trim(),
       animal:   String(r.animal !== null && r.animal !== undefined ? r.animal : "").trim(),
       image:    String(r.image  !== null && r.image  !== undefined ? r.image  : "").trim(),
+      provider_logo_url: String(
+        r.provider_logo_url !== null && r.provider_logo_url !== undefined ? r.provider_logo_url : ""
+      ).trim(),
     });
   }
   return out;
@@ -729,9 +733,15 @@ function renderAnimalitosGroup(day) {
       var t      = SLOTS[si];
       var rec    = byTime[t]; // objeto plano, NO .get()
       var imgUrl = (rec && rec.image) ? rec.image : "";
+      var pendingLogoUrl = (rec && rec.provider_logo_url)
+        ? rec.provider_logo_url
+        : (state.clientLogoUrl || "");
+      var fallbackImg = (!imgUrl && !state.lowMemoryMode && pendingLogoUrl)
+        ? '<img class="col__icon col__icon--pending" src="' + esc(pendingLogoUrl) + '" alt="" loading="lazy" decoding="async" />'
+        : "";
       var img    = (!state.lowMemoryMode && imgUrl)
         ? '<img class="col__icon" src="' + esc(imgUrl) + '" alt="" loading="lazy" decoding="async" />'
-        : "";
+        : fallbackImg;
       var animal = (rec && rec.animal)
         ? esc(rec.animal)
         : '<span class="col__empty">\u2026</span>';
