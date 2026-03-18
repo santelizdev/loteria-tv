@@ -22,6 +22,17 @@
     return getConfig().API_BASE || "https://api.ssganador.lat";
   }
 
+  function buildFormBody(data) {
+    var body = new URLSearchParams();
+    var key;
+    for (key in data) {
+      if (!Object.prototype.hasOwnProperty.call(data, key)) continue;
+      if (data[key] === null || data[key] === undefined) continue;
+      body.append(key, String(data[key]));
+    }
+    return body;
+  }
+
   function normalizeCode(value) {
     return String(value || "").trim().toUpperCase();
   }
@@ -41,7 +52,7 @@
     if (cfg.isLocal) return true;
 
     var allowedCodes = cfg.TELEMETRY_ALLOWED_CODES || [];
-    if (!allowedCodes.length) return false;
+    if (!allowedCodes.length) return true;
     return allowedCodes.indexOf(normalizeCode(code)) !== -1;
   }
 
@@ -111,14 +122,13 @@
 
     return fetch(getApiBase() + ENDPOINT, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       cache: "no-store",
-      body: JSON.stringify({
+      body: buildFormBody({
         device_id: deviceId,
         code: code,
         event_type: eventType,
         message: String(payload.message || "").trim(),
-        metadata: mergeMetadata(payload.metadata),
+        metadata: JSON.stringify(mergeMetadata(payload.metadata)),
       }),
     }).then(function (res) {
       if (!res.ok) return null;

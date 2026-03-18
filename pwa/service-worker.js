@@ -6,17 +6,17 @@
 //   3. Reducir presión de memoria/almacenamiento en WebView viejos.
 // ============================================
 
-var CACHE_NAME = "loteriatv-shell-v20260318-low-memory";
+var CACHE_NAME = "loteriatv-shell-__APP_VERSION__";
 var APP_SHELL = [
   "./",
   "./index.html",
-  "./config.js",
-  "./deviceManager.js",
-  "./telemetry.js",
-  "./app.js",
-  "./src/styles.css",
-  "./manifest.json",
-  "./Favicon.ico"
+  "./config.js?v=__APP_VERSION__",
+  "./deviceManager.js?v=__APP_VERSION__",
+  "./telemetry.js?v=__APP_VERSION__",
+  "./app.js?v=__APP_VERSION__",
+  "./src/styles.css?v=__APP_VERSION__",
+  "./manifest.json?v=__APP_VERSION__",
+  "./Favicon.ico?v=__APP_VERSION__"
 ];
 
 function isHttpRequest(request) {

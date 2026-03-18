@@ -3,6 +3,7 @@
 # =========================
 from __future__ import annotations
 
+import json
 import random
 import string
 from datetime import date, datetime
@@ -177,6 +178,11 @@ def _normalize_telemetry_message(value: Any) -> str:
 def _normalize_telemetry_metadata(value: Any) -> Dict[str, Any]:
     if value in (None, ""):
         return {}
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("metadata must be a valid JSON object") from exc
     if not isinstance(value, dict):
         raise ValueError("metadata must be an object")
     return value

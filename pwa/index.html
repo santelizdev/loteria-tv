@@ -4,9 +4,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="app-version" content="__APP_VERSION__" />
     <title>Lotería TV</title>
-    <link rel="icon" href="/favicon.ico">
-    <link rel="stylesheet" href="./src/styles.css" />
+    <link rel="icon" href="./Favicon.ico?v=__APP_VERSION__">
+    <link rel="manifest" href="./manifest.json?v=__APP_VERSION__" />
+    <link rel="stylesheet" href="./src/styles.css?v=__APP_VERSION__" />
   </head>
 
   <body class="theme-dark">
@@ -63,9 +65,9 @@
     </div>
 
     <!-- FIX Android 9: cargar en orden, SIN type="module" -->
-    <script src="./config.js"></script>
-    <script src="./deviceManager.js"></script>
-    <script src="./telemetry.js"></script>
-    <script src="./app.js"></script>
+    <script src="./config.js?v=__APP_VERSION__"></script>
+    <script src="./deviceManager.js?v=__APP_VERSION__"></script>
+    <script src="./telemetry.js?v=__APP_VERSION__"></script>
+    <script src="./app.js?v=__APP_VERSION__"></script>
   </body>
 </html>

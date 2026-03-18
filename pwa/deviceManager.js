@@ -31,6 +31,36 @@ function getWsBase() {
     : "wss://api.ssganador.lat";
 }
 
+function getHeartbeatIntervalMs() {
+  var cfg = window.__APP_CONFIG__ || {};
+  var value = Number(cfg.HEARTBEAT_INTERVAL_MS || 60000);
+  return value >= 15000 ? value : 60000;
+}
+
+function getHeartbeatJitterMs() {
+  var cfg = window.__APP_CONFIG__ || {};
+  var value = Number(cfg.HEARTBEAT_JITTER_MS || 15000);
+  return value >= 0 ? value : 15000;
+}
+
+function getNextHeartbeatDelayMs() {
+  var base = getHeartbeatIntervalMs();
+  var jitter = getHeartbeatJitterMs();
+  if (!jitter) return base;
+  return base + Math.floor(Math.random() * jitter);
+}
+
+function buildFormBody(data) {
+  var body = new URLSearchParams();
+  var key;
+  for (key in data) {
+    if (!Object.prototype.hasOwnProperty.call(data, key)) continue;
+    if (data[key] === null || data[key] === undefined) continue;
+    body.append(key, String(data[key]));
+  }
+  return body;
+}
+
 function getQueryParam(name) {
   var url = new URL(window.location.href);
   return url.searchParams.get(name);
@@ -139,10 +169,9 @@ DeviceManager.prototype.ensureActivationCode = function () {
 
   var apiBase = getApiBase();
   return fetch(apiBase + ENDPOINTS.register, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      cache: "no-store",
-    body: JSON.stringify({ device_id: self.deviceId }),
+    method: "POST",
+    cache: "no-store",
+    body: buildFormBody({ device_id: self.deviceId }),
   }).then(function (res) {
     if (!res.ok) {
       return res.text().then(function (text) {
@@ -254,19 +283,38 @@ DeviceManager.prototype.startHeartbeat = function () {
   if (self.heartbeatInterval) return;
   if (!self.activationCode) return;
 
-  var apiBase = getApiBase();
+  self.scheduleHeartbeat(getNextHeartbeatDelayMs());
+  self.sendHeartbeatOnce();
+};
 
-  self.heartbeatInterval = setInterval(function () {
-    fetch(apiBase + ENDPOINTS.heartbeat, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-        body: JSON.stringify({
-        device_id: self.deviceId,
-        code: self.activationCode,
-        }),
-    }).catch(function () {});
-    }, 30000);
+DeviceManager.prototype.scheduleHeartbeat = function (delayMs) {
+  var self = this;
+  if (self.heartbeatInterval) return;
+
+  self.heartbeatInterval = setTimeout(function tickHeartbeat() {
+    self.heartbeatInterval = null;
+    self.sendHeartbeatOnce().then(function () {
+      if (!self.isActive || navigator.onLine === false) return;
+      self.scheduleHeartbeat(getNextHeartbeatDelayMs());
+    });
+  }, delayMs);
+};
+
+DeviceManager.prototype.sendHeartbeatOnce = function () {
+  var self = this;
+  if (!self.activationCode) return Promise.resolve(null);
+
+  var apiBase = getApiBase();
+  return fetch(apiBase + ENDPOINTS.heartbeat, {
+    method: "POST",
+    cache: "no-store",
+    body: buildFormBody({
+      device_id: self.deviceId,
+      code: self.activationCode,
+    }),
+  }).catch(function () {
+    return null;
+  });
 };
 
 DeviceManager.prototype.startResultsPolling = function () {
@@ -329,7 +377,7 @@ DeviceManager.prototype.syncStatusOnce = function () {
 DeviceManager.prototype.handleOffline = function () {
     console.warn("Sin conexión a internet");
   if (this.resultsInterval)   clearInterval(this.resultsInterval);
-    if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+    if (this.heartbeatInterval) clearTimeout(this.heartbeatInterval);
   this.resultsInterval   = null;
     this.heartbeatInterval = null;
 };

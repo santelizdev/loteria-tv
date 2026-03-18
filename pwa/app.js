@@ -10,7 +10,7 @@ var ROTATION_MS            = 40000;
 var ANIMALITOS_REFRESH_MS  = 60000;
 var ANIMALITOS_INTERVAL_MS = 40000;
 var NETWORK_TIMEOUT_MS     = 15000;
-var CACHE_PREFIX           = "loteriatv-cache-v1:";
+var CACHE_PREFIX           = "loteriatv-cache-" + getAppVersion() + ":";
 
 var SLOTS = (function () {
   var out = [];
@@ -32,6 +32,14 @@ var themeToggleEl = document.getElementById("themeToggle");
 
 function telemetry() {
   return window.DeviceTelemetry || null;
+}
+
+function getAppVersion() {
+  if (window.__APP_CONFIG__ && window.__APP_CONFIG__.APP_VERSION) {
+    return String(window.__APP_CONFIG__.APP_VERSION);
+  }
+  var meta = document.querySelector('meta[name="app-version"]');
+  return meta ? String(meta.getAttribute("content") || "dev") : "dev";
 }
 
 // ---------- HELPERS ----------
@@ -235,7 +243,10 @@ function fetchWithTimeout(url, options, timeoutMs) {
 
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
-  navigator.serviceWorker.register("./service-worker.js").catch(function (err) {
+  navigator.serviceWorker.register(
+    "./service-worker.js?v=" + encodeURIComponent(getAppVersion()),
+    { updateViaCache: "none" }
+  ).catch(function (err) {
     console.warn("SW register failed:", err && err.message ? err.message : err);
   });
 }
