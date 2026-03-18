@@ -90,6 +90,8 @@ Variables opcionales:
 Comandos útiles:
 
 ```bash
+python manage.py run_scraper_suite
+python manage.py run_scraper_suite --notify
 python manage.py notify_scraper_alerts --dry-run
 python manage.py notify_scraper_alerts
 python manage.py check_ops_health --strict
@@ -99,3 +101,4 @@ Notas:
 
 - Todo este monitoreo es interno y solo vive en Django Admin / comandos de operación.
 - El admin de `Scraper health` resume `OK / fallo hoy / sin OK hoy / stale` y permite forzar aviso interno o resetear cooldown.
+- Si producción usa `systemd timer` en vez de Celery, el timer debe ejecutar `python manage.py run_scraper_suite` para que el monitor se actualice correctamente.
