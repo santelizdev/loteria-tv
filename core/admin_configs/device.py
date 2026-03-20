@@ -6,6 +6,7 @@ from django.contrib import admin
 from django.utils import timezone
 
 from core.models import Device, DeviceTelemetryEvent
+from core.services.device_telemetry_service import DeviceTelemetryService
 
 
 class DeviceOnlineStatusFilter(admin.SimpleListFilter):
@@ -110,9 +111,11 @@ class DeviceAdmin(admin.ModelAdmin):
     telemetry_summary.short_description = "Resumen telemetria"
 
     def recent_telemetry_events(self, obj):
-        events = obj.telemetry_events.all()[:10]
+        events = obj.telemetry_events.filter(
+            event_type__in=DeviceTelemetryService.INCIDENT_EVENT_TYPES
+        )[:10]
         if not events:
-            return "Sin eventos de telemetria."
+            return "Sin incidentes de telemetria."
         return "\n".join(
             f"{event.created_at:%Y-%m-%d %H:%M:%S} | {event.event_type} | {event.ip_address or '-'} | {(event.message or '-').strip()}"
             for event in events

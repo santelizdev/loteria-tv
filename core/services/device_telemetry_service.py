@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.db.models import Q
 from django.utils import timezone
 
 from core.models import Device, DeviceTelemetryEvent, DeviceTelemetrySnapshot
@@ -14,6 +15,11 @@ class DeviceTelemetryService:
         "device_model": "device_model",
         "app_version": "app_version",
     }
+    INCIDENT_EVENT_TYPES = {
+        DeviceTelemetryEvent.EventType.LOAD_ERROR,
+        DeviceTelemetryEvent.EventType.LOW_MEMORY,
+    }
+    INCIDENT_SEVERITIES = {"error", "critical"}
 
     @classmethod
     def get_or_create_snapshot(cls, *, device: Device) -> DeviceTelemetrySnapshot:
@@ -38,15 +44,8 @@ class DeviceTelemetryService:
         ip_address: str | None,
         message: str = "",
         metadata: dict[str, Any] | None = None,
-    ) -> DeviceTelemetryEvent:
+    ) -> DeviceTelemetryEvent | None:
         payload = metadata or {}
-        event = DeviceTelemetryEvent.objects.create(
-            device=device,
-            event_type=event_type,
-            ip_address=ip_address or None,
-            message=message or "",
-            metadata=payload,
-        )
         cls._update_snapshot_from_event(
             device=device,
             event_type=event_type,
@@ -54,7 +53,32 @@ class DeviceTelemetryService:
             message=message,
             metadata=payload,
         )
+        if not cls.should_persist_event(event_type=event_type, metadata=payload):
+            return None
+        event = DeviceTelemetryEvent.objects.create(
+            device=device,
+            event_type=event_type,
+            ip_address=ip_address or None,
+            message=message or "",
+            metadata=payload,
+        )
         return event
+
+    @classmethod
+    def should_persist_event(cls, *, event_type: str, metadata: dict[str, Any] | None = None) -> bool:
+        if event_type in cls.INCIDENT_EVENT_TYPES:
+            return True
+        if event_type == DeviceTelemetryEvent.EventType.CUSTOM:
+            severity = str((metadata or {}).get("severity") or "").strip().lower()
+            return severity in cls.INCIDENT_SEVERITIES
+        return False
+
+    @classmethod
+    def incident_events_q(cls) -> Q:
+        return Q(event_type__in=cls.INCIDENT_EVENT_TYPES) | Q(
+            event_type=DeviceTelemetryEvent.EventType.CUSTOM,
+            metadata__severity__in=sorted(cls.INCIDENT_SEVERITIES),
+        )
 
     @classmethod
     def _update_snapshot_from_event(

@@ -1050,10 +1050,6 @@ window.addEventListener("resultsUpdated", function (e) {
       state.deviceCode = String(code || "----").toUpperCase();
       renderDeviceCode(state.deviceCode);
       render();
-      reportTelemetry("APP_START", {
-        message: "PWA boot started",
-        metadata: { boot_stage: "activation_code_ready" },
-      });
       reportWebViewInfo({
         metadata: { boot_stage: "activation_code_ready" },
       });

@@ -6,9 +6,11 @@ from unittest.mock import call, patch
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.test import TestCase, override_settings
+from django.core.management import call_command
 from django.utils import timezone
 
 from core.models import Branch, Client, CurrentResult, Device, DeviceTelemetryEvent, Provider, ScraperHealth
+from core.services.device_telemetry_service import DeviceTelemetryService
 from core.services.result_window_service import delete_future_rows_for_provider
 from core.services.scraper_notification_service import ScraperNotificationService
 from core.services.scraper_health_service import ScraperHealthService
@@ -104,6 +106,26 @@ class DeviceTelemetryAPITestCase(TestCase):
         )
 
         self.assertEqual(response.status_code, 403)
+
+    def test_load_success_updates_snapshot_without_persisting_event(self):
+        response = self.client.post(
+            "/api/devices/telemetry/",
+            data={
+                "device_id": self.device.device_id,
+                "code": self.device.activation_code,
+                "event_type": "LOAD_SUCCESS",
+                "message": "render ok",
+            },
+            content_type="application/json",
+            REMOTE_ADDR="10.10.10.20",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(DeviceTelemetryEvent.objects.count(), 0)
+        self.assertEqual(response.json()["persisted"], False)
+
+        snapshot = self.device.telemetry_snapshot
+        self.assertIsNotNone(snapshot.last_load_success_at)
 
 @override_settings(CACHES=TEST_CACHES, CHANNEL_LAYERS=TEST_CHANNEL_LAYERS)
 class ScraperHealthServiceTestCase(TestCase):
@@ -254,6 +276,42 @@ class DailyRetentionCommandTestCase(TestCase):
                 call("archive_daily_animalitos", date="2026-03-19"),
                 call("enforce_retention", keep_archive_days=1),
             ],
+        )
+
+
+class PurgeTelemetryEventsCommandTestCase(TestCase):
+    def setUp(self):
+        self.client_model = Client.objects.create(name="Cliente QA")
+        self.branch = Branch.objects.create(
+            client=self.client_model,
+            name="Sucursal QA",
+            is_active=True,
+            paid_until=timezone.now() + timedelta(days=30),
+        )
+        self.device = Device.objects.create(
+            device_id="tv-qa-telemetry",
+            activation_code="TEL123",
+            is_active=True,
+            branch=self.branch,
+        )
+
+    def test_purge_deletes_non_incident_events(self):
+        DeviceTelemetryEvent.objects.create(
+            device=self.device,
+            event_type=DeviceTelemetryEvent.EventType.LOAD_ERROR,
+            message="boom",
+        )
+        DeviceTelemetryEvent.objects.create(
+            device=self.device,
+            event_type=DeviceTelemetryEvent.EventType.LOAD_SUCCESS,
+            message="ok",
+        )
+
+        call_command("purge_telemetry_events")
+
+        self.assertEqual(
+            list(DeviceTelemetryEvent.objects.values_list("event_type", flat=True)),
+            [DeviceTelemetryEvent.EventType.LOAD_ERROR],
         )
         monitor.refresh_from_db()
         self.assertIsNotNone(monitor.last_notified_at)

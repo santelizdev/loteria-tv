@@ -93,6 +93,8 @@ Comandos útiles:
 python manage.py run_scraper_suite
 python manage.py run_scraper_suite --notify
 python manage.py run_daily_retention
+python manage.py purge_telemetry_events --dry-run
+python manage.py purge_telemetry_events
 python manage.py notify_scraper_alerts --dry-run
 python manage.py notify_scraper_alerts
 python manage.py check_ops_health --strict
@@ -104,3 +106,4 @@ Notas:
 - El admin de `Scraper health` resume `OK / fallo hoy / sin OK hoy / stale` y permite forzar aviso interno o resetear cooldown.
 - Si producción usa `systemd timer` en vez de Celery, el timer debe ejecutar `python manage.py run_scraper_suite` para que el monitor se actualice correctamente.
 - El timer de retention en producción debe apuntar a `scripts/daily_retention.sh`, archivo versionado dentro del repo.
+- `DeviceTelemetryEvent` queda orientado a incidentes: persiste `LOAD_ERROR` y `LOW_MEMORY`; los eventos informativos solo actualizan snapshot.

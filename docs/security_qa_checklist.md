@@ -33,6 +33,8 @@ Valida:
 python manage.py run_daily_retention
 python manage.py enforce_retention --dry-run
 python manage.py enforce_retention
+python manage.py purge_telemetry_events --dry-run
+python manage.py purge_telemetry_events
 ```
 
 Desde el host local, con `.env.local` configurado:

@@ -464,8 +464,9 @@ class DeviceTelemetryAPIView(APIView):
             Response(
                 {
                     "status": "ok",
-                    "event_id": event.id,
-                    "event_type": event.event_type,
+                    "event_id": event.id if event else None,
+                    "event_type": event_type,
+                    "persisted": bool(event),
                     "device": device.activation_code,
                     "last_heartbeat_at": snapshot.last_heartbeat_at.isoformat() if snapshot.last_heartbeat_at else None,
                     "last_ip_address": snapshot.last_ip_address,

@@ -3,13 +3,10 @@
 (function () {
   var ENDPOINT = "/api/devices/telemetry/";
   var eventThrottleMs = {
-    APP_START: 60 * 1000,
     WEBVIEW_INFO: 6 * 60 * 60 * 1000,
     LOAD_SUCCESS: 60 * 1000,
     LOAD_ERROR: 30 * 1000,
     LOW_MEMORY: 30 * 1000,
-    APP_PAUSE: 30 * 1000,
-    APP_RESUME: 30 * 1000,
   };
   var lastSentAtByKey = {};
   var sessionFlags = {};
@@ -162,19 +159,7 @@
     window.addEventListener("lowMemory", report);
   }
 
-  function bindVisibilityLifecycle() {
-    if (typeof document.hidden === "undefined") return;
-    document.addEventListener("visibilitychange", function () {
-      if (document.hidden) {
-        send("APP_PAUSE", { message: "document.hidden=true" });
-        return;
-      }
-      send("APP_RESUME", { message: "document.hidden=false" });
-    });
-  }
-
   bindLowMemoryListeners();
-  bindVisibilityLifecycle();
 
   window.DeviceTelemetry = {
     send: send,

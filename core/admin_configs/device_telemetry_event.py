@@ -3,6 +3,7 @@ from __future__ import annotations
 from django.contrib import admin
 
 from core.models import DeviceTelemetryEvent
+from core.services.device_telemetry_service import DeviceTelemetryService
 
 
 @admin.register(DeviceTelemetryEvent)
@@ -25,6 +26,10 @@ class DeviceTelemetryEventAdmin(admin.ModelAdmin):
     )
     readonly_fields = ("device", "event_type", "ip_address", "message", "metadata", "created_at")
     autocomplete_fields = ("device",)
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request).select_related("device", "device__branch")
+        return qs.filter(DeviceTelemetryService.incident_events_q())
 
     def activation_code(self, obj):
         return obj.device.activation_code
