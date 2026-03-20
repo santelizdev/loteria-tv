@@ -37,6 +37,10 @@ from django.utils import timezone
 from django.core.cache import cache
 
 from core.models import Provider, CurrentResult
+from core.services.result_window_service import (
+    delete_future_rows_for_provider,
+    get_business_cutoff_time,
+)
 TUAZAR_URL = "https://www.tuazar.com/loteria/resultados/"
 
 
@@ -308,6 +312,10 @@ def _invalidate_results_cache() -> None:
         cache.delete(k)
 
 
+def _filter_due_rows(rows: List[ParsedRow], cutoff_time: time) -> List[ParsedRow]:
+    return [row for row in rows if row.draw_time <= cutoff_time]
+
+
 # -----------------------------
 # Command
 # -----------------------------
@@ -342,6 +350,7 @@ class Command(BaseCommand):
 
         soup = BeautifulSoup(html, "html.parser")
         today = timezone.localdate()
+        cutoff_time = get_business_cutoff_time()
 
         # Mapeo de targets (títulos tal como suelen aparecer en la web).
         # Si TuAzar cambia acentos/mayúsculas, _find_block_by_title lo tolera.
@@ -353,6 +362,7 @@ class Command(BaseCommand):
 
         saved = 0
         saved_with_signo = 0
+        future_purged = 0
         missing_blocks: List[str] = []
 
         with transaction.atomic():
@@ -362,12 +372,18 @@ class Command(BaseCommand):
                 missing_blocks.append("Chance Astral")
             else:
                 provider = _get_or_create_provider("Chance Astral")
-                rows = _parse_block_triple_and_signo(b)
+                rows = _filter_due_rows(_parse_block_triple_and_signo(b), cutoff_time)
                 for r in rows:
                     if _save_row(provider=provider, draw_date=today, row=r):
                         saved += 1
                         if r.signo:
                             saved_with_signo += 1
+                future_purged += delete_future_rows_for_provider(
+                    model=CurrentResult,
+                    provider=provider,
+                    draw_date=today,
+                    cutoff_time=cutoff_time,
+                )
 
             # 2) Triple Gana (con signo)
             b = _find_block_by_title(soup, targets["Triple Gana"]["title"])
@@ -375,12 +391,18 @@ class Command(BaseCommand):
                 missing_blocks.append("Triple Gana")
             else:
                 provider = _get_or_create_provider("Triple Gana")
-                rows = _parse_block_triple_and_signo(b)
+                rows = _filter_due_rows(_parse_block_triple_and_signo(b), cutoff_time)
                 for r in rows:
                     if _save_row(provider=provider, draw_date=today, row=r):
                         saved += 1
                         if r.signo:
                             saved_with_signo += 1
+                future_purged += delete_future_rows_for_provider(
+                    model=CurrentResult,
+                    provider=provider,
+                    draw_date=today,
+                    cutoff_time=cutoff_time,
+                )
 
             # 3) Super Gana (con signo)
             b = _find_block_by_title(soup, targets["Super Gana"]["title"])
@@ -388,12 +410,18 @@ class Command(BaseCommand):
                 missing_blocks.append("Super Gana")
             else:
                 provider = _get_or_create_provider("Super Gana")
-                rows = _parse_block_triple_and_signo(b)
+                rows = _filter_due_rows(_parse_block_triple_and_signo(b), cutoff_time)
                 for r in rows:
                     if _save_row(provider=provider, draw_date=today, row=r):
                         saved += 1
                         if r.signo:
                             saved_with_signo += 1
+                future_purged += delete_future_rows_for_provider(
+                    model=CurrentResult,
+                    provider=provider,
+                    draw_date=today,
+                    cutoff_time=cutoff_time,
+                )
 
         # Cache invalidation al final (crítico por tu keyspace results:triples:v4:...:{YYYY-MM-DD})
         _invalidate_results_cache()
@@ -402,5 +430,6 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS("TuAzar scrape finalizado."))
         self.stdout.write(f"- Guardados/upsert: {saved}")
         self.stdout.write(f"- Guardados con signo: {saved_with_signo}")
+        self.stdout.write(f"- Filas futuras limpiadas: {future_purged}")
         if missing_blocks:
             self.stdout.write(self.style.WARNING(f"- Bloques no encontrados en HTML: {', '.join(missing_blocks)}"))

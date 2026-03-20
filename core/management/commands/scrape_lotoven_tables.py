@@ -26,6 +26,10 @@ from django.utils import timezone
 
 from core.models import CurrentResult, Provider
 from core.services.device_redis_service import DeviceRedisService
+from core.services.result_window_service import (
+    delete_future_rows_for_provider,
+    get_business_cutoff_time,
+)
 
 LOTERIAS_URL = "https://lotoven.com/loterias/"
 TRIPLE_CHANCE_URL = "https://lotoven.com/loteria/triplechance/resultados/"
@@ -156,6 +160,15 @@ def _cleanup_unexpected_times(provider: Provider, draw_date, expected_hhmm: set[
         provider=provider,
         draw_date=draw_date,
     ).exclude(draw_time__in=allowed).delete()
+
+
+def _filter_due_current_rows(rows, cutoff_time: time):
+    filtered = []
+    for row in rows:
+        draw_time = row[0] if isinstance(row[0], time) else row[1]
+        if draw_time <= cutoff_time:
+            filtered.append(row)
+    return filtered
 
 
 def _get_or_create_provider(name: str, source_url: str) -> Provider:
@@ -334,8 +347,10 @@ class Command(BaseCommand):
             return s
 
         draw_date = timezone.localdate()
+        cutoff_time = get_business_cutoff_time()
         total_saved = 0
         total_with_signo = 0
+        total_future_purged = 0
 
         specs = PROVIDERS
         if only:
@@ -358,7 +373,7 @@ class Command(BaseCommand):
                     continue
 
                 if spec.kind == "table_simple":
-                    parsed = _parse_table_simple(block)
+                    parsed = _filter_due_current_rows(_parse_table_simple(block), cutoff_time)
                     provider = _get_or_create_provider(spec.name, spec.source_url)
                     for t, winning_number, extra in parsed:
                         _save_result(
@@ -369,14 +384,23 @@ class Command(BaseCommand):
                             extra=extra,
                         )
                         total_saved += 1
+                    total_future_purged += delete_future_rows_for_provider(
+                        model=CurrentResult,
+                        provider=provider,
+                        draw_date=draw_date,
+                        cutoff_time=cutoff_time,
+                    )
                 elif spec.kind == "triple_chance":
-                    parsed = _parse_triple_chance(block)
-                    parsed = _filter_expected_triple_chance_times(parsed)
-                    chance_providers = {}
+                    parsed = _filter_due_current_rows(
+                        _filter_expected_triple_chance_times(_parse_triple_chance(block)),
+                        cutoff_time,
+                    )
+                    chance_providers = {
+                        group: _get_or_create_provider(f"{spec.name} {group}", spec.source_url)
+                        for group in ("A", "B", "C")
+                    }
                     for group, t, winning_number, extra in parsed:
-                        provider = _get_or_create_provider(f"{spec.name} {group}", spec.source_url)
-                        if provider.name not in chance_providers:
-                            chance_providers[provider.name] = provider
+                        provider = chance_providers[group]
                         _save_result(
                             provider=provider,
                             draw_date=draw_date,
@@ -389,15 +413,25 @@ class Command(BaseCommand):
                             total_with_signo += 1
                     for _, p in chance_providers.items():
                         _cleanup_unexpected_times(p, draw_date, EXPECTED_TRIPLE_CHANCE_TIMES)
+                        total_future_purged += delete_future_rows_for_provider(
+                            model=CurrentResult,
+                            provider=p,
+                            draw_date=draw_date,
+                            cutoff_time=cutoff_time,
+                        )
                 elif spec.kind == "triple_abc":
-                    parsed = _parse_triple_abc(block)
-                    parsed = _filter_expected_triple_abc_times(spec.name, parsed)
+                    parsed = _filter_due_current_rows(
+                        _filter_expected_triple_abc_times(spec.name, _parse_triple_abc(block)),
+                        cutoff_time,
+                    )
                     expected_abc = EXPECTED_TRIPLE_ABC_TIMES.get(spec.name)
-                    abc_providers = {}
+                    expected_groups = ("A", "C") if spec.name == "Triple Zamorano" else ("A", "B", "C")
+                    abc_providers = {
+                        group: _get_or_create_provider(f"{spec.name} {group}", spec.source_url)
+                        for group in expected_groups
+                    }
                     for group, t, winning_number, extra in parsed:
-                        provider = _get_or_create_provider(f"{spec.name} {group}", spec.source_url)
-                        if provider.name not in abc_providers:
-                            abc_providers[provider.name] = provider
+                        provider = abc_providers[group]
                         _save_result(
                             provider=provider,
                             draw_date=draw_date,
@@ -411,6 +445,12 @@ class Command(BaseCommand):
                     if expected_abc:
                         for _, p in abc_providers.items():
                             _cleanup_unexpected_times(p, draw_date, expected_abc)
+                            total_future_purged += delete_future_rows_for_provider(
+                                model=CurrentResult,
+                                provider=p,
+                                draw_date=draw_date,
+                                cutoff_time=cutoff_time,
+                            )
                 else:
                     parsed = []
 
@@ -434,6 +474,6 @@ class Command(BaseCommand):
 
         self.stdout.write(
             self.style.SUCCESS(
-                f"Guardados {total_saved} resultados (con signo={total_with_signo})"
+                f"Guardados {total_saved} resultados (con signo={total_with_signo}, futuras_limpiadas={total_future_purged})"
             )
         )

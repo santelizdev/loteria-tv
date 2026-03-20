@@ -30,6 +30,7 @@ Valida:
 ### 2) Retention con safety checks
 
 ```bash
+python manage.py run_daily_retention
 python manage.py enforce_retention --dry-run
 python manage.py enforce_retention
 ```
@@ -41,6 +42,12 @@ python manage.py enforce_retention --dry-run
 ```
 
 `enforce_retention` ahora aborta si detecta que **no hay datos de ayer** en `ResultArchive` o `AnimalitoArchive`.
+
+El timer de producción debe ejecutar el wrapper versionado:
+
+```bash
+/home/deploy/loteriatv/scripts/daily_retention.sh
+```
 
 Si necesitas forzarlo (mantenimiento manual):
 

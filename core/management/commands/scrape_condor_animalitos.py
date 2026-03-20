@@ -16,6 +16,10 @@ from django.utils import timezone
 from core.models import Provider
 from core.models.animalito_result import AnimalitoResult
 from core.services.device_redis_service import DeviceRedisService
+from core.services.result_window_service import (
+    delete_future_rows_for_provider,
+    get_business_cutoff_time,
+)
 
 
 SOURCE_URL = "https://www.lottoresultados.com/resultados/animalitos/condor-gana"
@@ -120,6 +124,16 @@ class Command(BaseCommand):
             return
 
         provider = _get_or_create_provider()
+        future_purged = 0
+        if target_date == today:
+            cutoff_time = get_business_cutoff_time()
+            rows = [row for row in rows if row["draw_time_obj"] <= cutoff_time]
+            future_purged = delete_future_rows_for_provider(
+                model=AnimalitoResult,
+                provider=provider,
+                draw_date=target_date,
+                cutoff_time=cutoff_time,
+            )
 
         created = 0
         updated = 0
@@ -142,7 +156,7 @@ class Command(BaseCommand):
                 updated += 1
 
         self.stdout.write(self.style.SUCCESS(
-            f"OK Condor Gana (lottoresultados): date={target_date} parsed={len(rows)} created={created} updated={updated}"
+            f"OK Condor Gana (lottoresultados): date={target_date} parsed={len(rows)} created={created} updated={updated} future_purged={future_purged}"
         ))
 
     def _fetch_html(self, timeout: int) -> str:

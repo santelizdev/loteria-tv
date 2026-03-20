@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from datetime import timedelta
-from unittest.mock import patch
+from datetime import datetime, timedelta
+from unittest.mock import call, patch
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from core.models import Branch, Client, Device, DeviceTelemetryEvent, ScraperHealth
+from core.models import Branch, Client, CurrentResult, Device, DeviceTelemetryEvent, Provider, ScraperHealth
+from core.services.result_window_service import delete_future_rows_for_provider
 from core.services.scraper_notification_service import ScraperNotificationService
 from core.services.scraper_health_service import ScraperHealthService
 
@@ -196,6 +197,64 @@ class ScraperNotificationServiceTestCase(TestCase):
 
         self.assertEqual(sent, 1)
         mock_send_mail.assert_called_once()
+
+
+class ResultWindowServiceTestCase(TestCase):
+    def test_delete_future_rows_for_provider_keeps_only_due_rows(self):
+        provider = Provider.objects.create(
+            name="Triple Chance A",
+            source_url="https://example.com/provider",
+            is_active=True,
+        )
+        draw_date = timezone.localdate()
+        CurrentResult.objects.create(
+            provider=provider,
+            draw_date=draw_date,
+            draw_time=datetime.strptime("13:00", "%H:%M").time(),
+            winning_number="111",
+        )
+        CurrentResult.objects.create(
+            provider=provider,
+            draw_date=draw_date,
+            draw_time=datetime.strptime("16:00", "%H:%M").time(),
+            winning_number="222",
+        )
+
+        deleted = delete_future_rows_for_provider(
+            model=CurrentResult,
+            provider=provider,
+            draw_date=draw_date,
+            cutoff_time=datetime.strptime("14:00", "%H:%M").time(),
+        )
+
+        self.assertEqual(deleted, 1)
+        self.assertEqual(
+            list(
+                CurrentResult.objects.filter(provider=provider, draw_date=draw_date)
+                .values_list("winning_number", flat=True)
+            ),
+            ["111"],
+        )
+
+
+class DailyRetentionCommandTestCase(TestCase):
+    @patch("core.management.commands.run_daily_retention.call_command")
+    def test_run_daily_retention_calls_archive_then_retention(self, mock_call_command):
+        with patch("core.management.commands.run_daily_retention.timezone.localdate") as mock_localdate:
+            mock_localdate.return_value = datetime(2026, 3, 20).date()
+
+            from django.core.management import call_command
+
+            call_command("run_daily_retention")
+
+        self.assertEqual(
+            mock_call_command.call_args_list,
+            [
+                call("archive_daily_triples", date="2026-03-19"),
+                call("archive_daily_animalitos", date="2026-03-19"),
+                call("enforce_retention", keep_archive_days=1),
+            ],
+        )
         monitor.refresh_from_db()
         self.assertIsNotNone(monitor.last_notified_at)
         self.assertTrue(monitor.last_notified_signature)
