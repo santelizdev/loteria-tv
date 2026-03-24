@@ -28,7 +28,7 @@ class Device(models.Model):
     # Relación con sucursal
     branch = models.ForeignKey(
         "Branch",
-        on_delete=models.SET_NULL,
+        on_delete=models.CASCADE,
         null=True,
         blank=True,
         related_name="devices"
@@ -47,4 +47,3 @@ def assign_branch(self, branch):
         "branch_id": branch.id,
         "branch": {"id": branch.id, "name": branch.name},  # opcional, no estorba
     })
-

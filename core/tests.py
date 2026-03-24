@@ -3,13 +3,25 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from unittest.mock import call, patch
 
+from django.contrib.admin.models import ADDITION, CHANGE, DELETION, LogEntry
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
+from django.contrib.contenttypes.models import ContentType
 from django.test import TestCase, override_settings
 from django.core.management import call_command
 from django.utils import timezone
 
-from core.models import Branch, Client, CurrentResult, Device, DeviceTelemetryEvent, Provider, ScraperHealth
+from core.models import (
+    Branch,
+    Client,
+    CurrentResult,
+    Device,
+    DeviceTelemetryEvent,
+    DeviceTelemetrySnapshot,
+    Provider,
+    ScraperHealth,
+    Transmission,
+)
 from core.services.device_telemetry_service import DeviceTelemetryService
 from core.services.result_window_service import delete_future_rows_for_provider
 from core.services.scraper_notification_service import ScraperNotificationService
@@ -194,9 +206,12 @@ class ScraperHealthServiceTestCase(TestCase):
 
 
 class ScraperNotificationServiceTestCase(TestCase):
-    @override_settings(SCRAPER_ALERT_EMAILS=["ops@example.com"], DEFAULT_FROM_EMAIL="noreply@example.com")
-    @patch("core.services.scraper_notification_service.send_mail")
-    def test_notify_active_alerts_sends_email_and_marks_monitor(self, mock_send_mail):
+    @override_settings(
+        SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
+        SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
+    )
+    @patch("core.services.scraper_notification_service.requests.post")
+    def test_notify_active_alerts_sends_telegram_and_marks_monitor(self, mock_post):
         monitor = ScraperHealthService.get_or_create_monitor("condor_animalitos")
         now = timezone.now()
         monitor.last_status = ScraperHealth.Status.FAILED
@@ -215,10 +230,213 @@ class ScraperNotificationServiceTestCase(TestCase):
             ]
         )
 
-        sent = ScraperNotificationService.notify_active_alerts(now=now)
+        sent = ScraperNotificationService.notify_active_alerts(now=now, monitors=[monitor])
 
         self.assertEqual(sent, 1)
-        mock_send_mail.assert_called_once()
+        mock_post.assert_called_once()
+
+
+@override_settings(
+    CACHES=TEST_CACHES,
+    CHANNEL_LAYERS=TEST_CHANNEL_LAYERS,
+    SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
+    SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
+    SCRAPER_ADMIN_BASE_URL="http://127.0.0.1:8000",
+    ADMIN_ACTIVITY_TELEGRAM_ENABLED=True,
+)
+class AdminActivityNotificationSignalsTestCase(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_superuser(
+            username="root",
+            email="root@example.com",
+            password="secret123",
+        )
+        self.client_model = Client.objects.create(name="Cliente Ops")
+        self.branch = Branch.objects.create(
+            client=self.client_model,
+            name="Sucursal Ops",
+            is_active=True,
+            paid_until=timezone.now() + timedelta(days=30),
+        )
+        self.device = Device.objects.create(
+            device_id="tv-ops-001",
+            activation_code="OPS001",
+            is_active=True,
+            branch=self.branch,
+        )
+
+    @patch("core.services.scraper_notification_service.requests.post")
+    def test_admin_log_entry_notifies_client_creation(self, mock_post):
+        content_type = ContentType.objects.get_for_model(Client)
+        client_obj = Client.objects.create(name="Cliente Nuevo")
+
+        LogEntry.objects.create(
+            user=self.user,
+            content_type=content_type,
+            object_id=str(client_obj.pk),
+            object_repr=client_obj.name,
+            action_flag=ADDITION,
+            change_message='[{"added": {}}]',
+        )
+
+        self.assertEqual(mock_post.call_count, 1)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertIn("Actividad admin", payload["text"])
+        self.assertIn("Accion: creacion", payload["text"])
+        self.assertIn("Objeto: Cliente", payload["text"])
+
+    @patch("core.services.scraper_notification_service.requests.post")
+    def test_admin_log_entry_notifies_user_creation(self, mock_post):
+        user_model = get_user_model()
+        new_user = user_model.objects.create_user(
+            username="nuevo-admin",
+            email="nuevo@example.com",
+            password="secret123",
+        )
+        content_type = ContentType.objects.get_for_model(user_model)
+
+        LogEntry.objects.create(
+            user=self.user,
+            content_type=content_type,
+            object_id=str(new_user.pk),
+            object_repr=new_user.username,
+            action_flag=ADDITION,
+            change_message='[{"added": {}}]',
+        )
+
+        self.assertEqual(mock_post.call_count, 1)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertIn("Accion: creacion", payload["text"])
+        self.assertIn("Objeto: Usuario", payload["text"])
+
+    @patch("core.services.scraper_notification_service.requests.post")
+    def test_admin_log_entry_notifies_user_change(self, mock_post):
+        user_model = get_user_model()
+        target_user = user_model.objects.create_user(
+            username="edit-admin",
+            email="edit@example.com",
+            password="secret123",
+        )
+        content_type = ContentType.objects.get_for_model(user_model)
+
+        LogEntry.objects.create(
+            user=self.user,
+            content_type=content_type,
+            object_id=str(target_user.pk),
+            object_repr=target_user.username,
+            action_flag=CHANGE,
+            change_message='[{"changed": {"fields": ["Email address", "Staff status"]}}]',
+        )
+
+        self.assertEqual(mock_post.call_count, 1)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertIn("Accion: cambio", payload["text"])
+        self.assertIn("Objeto: Usuario", payload["text"])
+
+    @patch("core.services.scraper_notification_service.requests.post")
+    def test_admin_log_entry_notifies_user_deletion(self, mock_post):
+        user_model = get_user_model()
+        target_user = user_model.objects.create_user(
+            username="delete-admin",
+            email="delete@example.com",
+            password="secret123",
+        )
+        content_type = ContentType.objects.get_for_model(user_model)
+
+        LogEntry.objects.create(
+            user=self.user,
+            content_type=content_type,
+            object_id=str(target_user.pk),
+            object_repr=target_user.username,
+            action_flag=DELETION,
+            change_message="",
+        )
+
+        self.assertEqual(mock_post.call_count, 1)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertIn("Accion: eliminacion", payload["text"])
+        self.assertIn("Objeto: Usuario", payload["text"])
+
+    @patch("core.services.scraper_notification_service.requests.post")
+    def test_admin_log_entry_notifies_group_creation(self, mock_post):
+        group = Group.objects.create(name="Operadores QA")
+        content_type = ContentType.objects.get_for_model(Group)
+
+        LogEntry.objects.create(
+            user=self.user,
+            content_type=content_type,
+            object_id=str(group.pk),
+            object_repr=group.name,
+            action_flag=ADDITION,
+            change_message='[{"added": {}}]',
+        )
+
+        self.assertEqual(mock_post.call_count, 1)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertIn("Accion: creacion", payload["text"])
+        self.assertIn("Objeto: Grupo", payload["text"])
+
+    @patch("core.services.scraper_notification_service.requests.post")
+    def test_admin_log_entry_notifies_branch_paid_until_change(self, mock_post):
+        content_type = ContentType.objects.get_for_model(Branch)
+
+        LogEntry.objects.create(
+            user=self.user,
+            content_type=content_type,
+            object_id=str(self.branch.pk),
+            object_repr=self.branch.name,
+            action_flag=CHANGE,
+            change_message='[{"changed": {"fields": ["Paid until"]}}]',
+        )
+
+        self.assertEqual(mock_post.call_count, 1)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertIn("Accion: cambio", payload["text"])
+        self.assertIn("Campos: Paid until", payload["text"])
+
+    @patch("core.services.scraper_notification_service.requests.post")
+    def test_admin_log_entry_notifies_device_deletion(self, mock_post):
+        content_type = ContentType.objects.get_for_model(Device)
+
+        LogEntry.objects.create(
+            user=self.user,
+            content_type=content_type,
+            object_id=str(self.device.pk),
+            object_repr=self.device.activation_code,
+            action_flag=DELETION,
+            change_message="",
+        )
+
+        self.assertEqual(mock_post.call_count, 1)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertIn("Accion: eliminacion", payload["text"])
+        self.assertIn("Objeto: TV", payload["text"])
+
+    @patch("core.services.scraper_notification_service.requests.post")
+    def test_login_notifies(self, mock_post):
+        logged_in = self.client.login(username="root", password="secret123")
+
+        self.assertTrue(logged_in)
+        self.assertEqual(mock_post.call_count, 1)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertIn("Inicio de sesion admin", payload["text"])
+        self.assertIn("Usuario: root", payload["text"])
+
+    @patch("core.services.scraper_notification_service.requests.post")
+    def test_telemetry_event_notifies(self, mock_post):
+        DeviceTelemetryEvent.objects.create(
+            device=self.device,
+            event_type=DeviceTelemetryEvent.EventType.LOAD_ERROR,
+            ip_address="10.0.0.10",
+            message="net::ERR_CONNECTION_TIMED_OUT",
+        )
+
+        self.assertEqual(mock_post.call_count, 1)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertIn("Evento de telemetria", payload["text"])
+        self.assertIn("TV: OPS001", payload["text"])
+        self.assertIn("Tipo: LOAD_ERROR", payload["text"])
 
 
 class ResultWindowServiceTestCase(TestCase):
@@ -257,6 +475,47 @@ class ResultWindowServiceTestCase(TestCase):
             ),
             ["111"],
         )
+
+
+@override_settings(
+    CACHES=TEST_CACHES,
+    CHANNEL_LAYERS=TEST_CHANNEL_LAYERS,
+    ADMIN_ACTIVITY_TELEGRAM_ENABLED=False,
+    SCRAPER_TELEGRAM_BOT_TOKEN="",
+    SCRAPER_TELEGRAM_CHAT_IDS=[],
+)
+class ClientDeletionCascadeTestCase(TestCase):
+    def test_deleting_client_cascades_to_branch_devices_and_related_records(self):
+        client_model = Client.objects.create(name="Cliente Baja")
+        branch = Branch.objects.create(
+            client=client_model,
+            name="Sucursal Baja",
+            is_active=True,
+            paid_until=timezone.now() + timedelta(days=30),
+        )
+        device = Device.objects.create(
+            device_id="tv-baja-001",
+            activation_code="BAJA01",
+            is_active=True,
+            branch=branch,
+        )
+        DeviceTelemetrySnapshot.objects.create(device=device, last_ip_address="10.0.0.20")
+        DeviceTelemetryEvent.objects.create(
+            device=device,
+            event_type=DeviceTelemetryEvent.EventType.LOAD_ERROR,
+            ip_address="10.0.0.20",
+            message="error previo a baja",
+        )
+        Transmission.objects.create(device=device, success=True)
+
+        client_model.delete()
+
+        self.assertFalse(Client.objects.filter(pk=client_model.pk).exists())
+        self.assertFalse(Branch.objects.filter(pk=branch.pk).exists())
+        self.assertFalse(Device.objects.filter(pk=device.pk).exists())
+        self.assertFalse(DeviceTelemetrySnapshot.objects.filter(device_id=device.pk).exists())
+        self.assertFalse(DeviceTelemetryEvent.objects.filter(device_id=device.pk).exists())
+        self.assertFalse(Transmission.objects.filter(device_id=device.pk).exists())
 
 
 class DailyRetentionCommandTestCase(TestCase):
@@ -313,13 +572,13 @@ class PurgeTelemetryEventsCommandTestCase(TestCase):
             list(DeviceTelemetryEvent.objects.values_list("event_type", flat=True)),
             [DeviceTelemetryEvent.EventType.LOAD_ERROR],
         )
-        monitor.refresh_from_db()
-        self.assertIsNotNone(monitor.last_notified_at)
-        self.assertTrue(monitor.last_notified_signature)
 
-    @override_settings(SCRAPER_ALERT_EMAILS=["ops@example.com"], DEFAULT_FROM_EMAIL="noreply@example.com")
-    @patch("core.services.scraper_notification_service.send_mail")
-    def test_notify_active_alerts_respects_signature_cooldown(self, mock_send_mail):
+    @override_settings(
+        SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
+        SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
+    )
+    @patch("core.services.scraper_notification_service.requests.post")
+    def test_notify_active_alerts_respects_signature_cooldown(self, mock_post):
         now = timezone.now()
         monitor = ScraperHealthService.get_or_create_monitor("condor_animalitos")
         monitor.last_status = ScraperHealth.Status.FAILED
@@ -348,40 +607,27 @@ class PurgeTelemetryEventsCommandTestCase(TestCase):
             ]
         )
 
-        sent = ScraperNotificationService.notify_active_alerts(now=now)
+        sent = ScraperNotificationService.notify_active_alerts(now=now, monitors=[monitor])
         self.assertEqual(sent, 0)
-        mock_send_mail.assert_not_called()
+        mock_post.assert_not_called()
 
     @override_settings(
-        SCRAPER_ALERT_EMAILS=["ops@example.com"],
-        SCRAPER_ALERT_GROUPS=["Operators"],
-        SCRAPER_ALERT_USERNAMES=["alice"],
+        SCRAPER_TELEGRAM_CHAT_IDS=["1001", "1002"],
     )
-    def test_get_recipients_combines_env_users_and_groups(self):
-        operators = Group.objects.create(name="Operators")
-        user_model = get_user_model()
-        group_user = user_model.objects.create_user(
-            username="group-user",
-            email="group@example.com",
-            password="secret",
-        )
-        group_user.groups.add(operators)
-        named_user = user_model.objects.create_user(
-            username="alice",
-            email="alice@example.com",
-            password="secret",
-        )
-
+    def test_get_recipients_returns_telegram_chat_ids(self):
         recipients = ScraperNotificationService.get_recipients()
 
         self.assertEqual(
             recipients,
-            ["alice@example.com", "group@example.com", "ops@example.com"],
+            ["1001", "1002"],
         )
 
-    @override_settings(SCRAPER_ALERT_EMAILS=["ops@example.com"], DEFAULT_FROM_EMAIL="noreply@example.com")
-    @patch("core.services.scraper_notification_service.send_mail")
-    def test_notify_active_alerts_force_ignores_cooldown(self, mock_send_mail):
+    @override_settings(
+        SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
+        SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
+    )
+    @patch("core.services.scraper_notification_service.requests.post")
+    def test_notify_active_alerts_force_ignores_cooldown(self, mock_post):
         now = timezone.now()
         monitor = ScraperHealthService.get_or_create_monitor("condor_animalitos")
         monitor.last_status = ScraperHealth.Status.FAILED
@@ -418,4 +664,4 @@ class PurgeTelemetryEventsCommandTestCase(TestCase):
         )
 
         self.assertEqual(sent, 1)
-        mock_send_mail.assert_called_once()
+        mock_post.assert_called_once()

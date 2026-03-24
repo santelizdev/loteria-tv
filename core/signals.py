@@ -1,8 +1,11 @@
 # core/signals.py
 import logging
+from django.contrib.admin.models import LogEntry
+from django.contrib.auth.signals import user_logged_in
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from core.models import Device
+from core.models import Device, DeviceTelemetryEvent
+from core.services.admin_activity_notification_service import AdminActivityNotificationService
 from core.ws.events import notify_device
 
 logger = logging.getLogger(__name__)
@@ -49,3 +52,31 @@ def device_post_save(sender, instance: Device, created: bool, **kwargs):
             "SIGNAL sin WS — device no está listo: is_active=%s branch_id=%s",
             instance.is_active, instance.branch_id,
         )
+
+
+@receiver(post_save, sender=LogEntry)
+def admin_log_entry_post_save(sender, instance: LogEntry, created: bool, **kwargs):
+    if not created:
+        return
+    try:
+        AdminActivityNotificationService.notify_admin_log_entry(instance)
+    except Exception:
+        logger.exception("Fallo notificando actividad admin por Telegram")
+
+
+@receiver(user_logged_in)
+def admin_user_logged_in(sender, request, user, **kwargs):
+    try:
+        AdminActivityNotificationService.notify_user_login(user=user, request=request)
+    except Exception:
+        logger.exception("Fallo notificando inicio de sesion admin por Telegram")
+
+
+@receiver(post_save, sender=DeviceTelemetryEvent)
+def device_telemetry_event_post_save(sender, instance: DeviceTelemetryEvent, created: bool, **kwargs):
+    if not created:
+        return
+    try:
+        AdminActivityNotificationService.notify_telemetry_event(instance)
+    except Exception:
+        logger.exception("Fallo notificando evento de telemetria por Telegram")
