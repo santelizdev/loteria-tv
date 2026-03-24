@@ -1,0 +1,40 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+  <div id="content-main">
+    <h1>{{ title }}</h1>
+
+    <div style="margin:0 0 20px 0;padding:16px;border:1px solid #dde5ec;border-radius:12px;background:#fff;">
+      <p><strong>Incidente:</strong> #{{ incident.id }}</p>
+      <p><strong>Scraper:</strong> {{ incident.label }}</p>
+      <p><strong>Fecha objetivo:</strong> {{ incident.draw_date }}</p>
+      <p><strong>Grupo afectado:</strong> {{ incident.provider_name|default:"scraper" }} {% if incident.draw_time %}@ {{ incident.draw_time|time:"H:i" }}{% endif %}</p>
+      <p><strong>Motivo:</strong> {{ incident.failure_reason_code }}</p>
+      <p><strong>Resumen:</strong> {{ incident.summary }}</p>
+      <p><strong>Evidencia:</strong> {{ incident.evidence_summary }}</p>
+    </div>
+
+    <form method="post" novalidate>
+      {% csrf_token %}
+      <fieldset class="module aligned">
+        {% for field in form %}
+          <div class="form-row">
+            {{ field.errors }}
+            <div>
+              {{ field.label_tag }}
+              {{ field }}
+              {% if field.help_text %}
+                <div class="help">{{ field.help_text }}</div>
+              {% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      </fieldset>
+
+      <div class="submit-row">
+        <input type="submit" value="Guardar carga manual y resolver incidente" class="default">
+        <a href="{% url 'admin:core_scraperincident_change' incident.pk %}" class="button cancel-link">Cancelar</a>
+      </div>
+    </form>
+  </div>
+{% endblock %}

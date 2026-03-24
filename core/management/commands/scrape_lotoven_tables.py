@@ -148,7 +148,12 @@ def _save_result(*, provider: Provider, draw_date, draw_time: time, winning_numb
         provider=provider,
         draw_date=draw_date,
         draw_time=draw_time,
-        defaults={"winning_number": winning_number, "extra": extra},
+        defaults={
+            "winning_number": winning_number,
+            "extra": extra,
+            "result_origin": CurrentResult.ResultOrigin.AUTOMATIC_VALID,
+            "source_incident": None,
+        },
     )
 
 

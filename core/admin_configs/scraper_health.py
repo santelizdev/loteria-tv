@@ -8,6 +8,7 @@ from django.utils.safestring import mark_safe
 from core.models import ScraperHealth
 from core.services.scraper_health_service import ScraperHealthService
 from core.services.scraper_notification_service import ScraperNotificationService
+from core.services.scraper_ops_contract_service import ScraperOpsContractService
 
 
 class ScraperAlertStateFilter(admin.SimpleListFilter):
@@ -74,6 +75,7 @@ class ScraperHealthAdmin(admin.ModelAdmin):
         "last_finished_at",
         "last_success_at",
         "current_alert_summary",
+        "operational_contract_summary",
         "notification_recipient_summary",
         "last_error_message",
         "last_error_traceback",
@@ -93,7 +95,13 @@ class ScraperHealthAdmin(admin.ModelAdmin):
         (
             "Ejecucion",
             {
-                "fields": ("last_started_at", "last_finished_at", "last_success_at", "current_alert_summary"),
+                "fields": (
+                    "last_started_at",
+                    "last_finished_at",
+                    "last_success_at",
+                    "current_alert_summary",
+                    "operational_contract_summary",
+                ),
             },
         ),
         (
@@ -200,13 +208,20 @@ class ScraperHealthAdmin(admin.ModelAdmin):
 
     current_alert_summary.short_description = "Alerta actual"
 
+    def operational_contract_summary(self, obj):
+        return mark_safe(
+            ScraperOpsContractService.build_admin_summary(obj.scraper_key).replace("\n", "<br>")
+        )
+
+    operational_contract_summary.short_description = "Contrato Fase 0"
+
     def notification_recipient_summary(self, obj):
         recipients = ScraperNotificationService.get_recipients()
         if not recipients:
-            return "Sin destinatarios configurados."
+            return "Sin chats de Telegram configurados."
         return mark_safe("<br>".join(recipients))
 
-    notification_recipient_summary.short_description = "Destinatarios"
+    notification_recipient_summary.short_description = "Chats Telegram"
 
     def alert_status(self, obj):
         alert = ScraperHealthService.get_alert(obj.scraper_key, now=timezone.now())
@@ -216,7 +231,7 @@ class ScraperHealthAdmin(admin.ModelAdmin):
 
     alert_status.short_description = "Alerta"
 
-    @admin.action(description="Enviar notificacion interna ahora")
+    @admin.action(description="Enviar alerta Telegram ahora")
     def send_internal_alert_now(self, request, queryset):
         sent = ScraperNotificationService.notify_active_alerts(
             now=timezone.now(),
@@ -224,11 +239,11 @@ class ScraperHealthAdmin(admin.ModelAdmin):
             force=True,
         )
         if sent:
-            self.message_user(request, f"Se enviaron {sent} alertas internas.", level=messages.SUCCESS)
+            self.message_user(request, f"Se enviaron {sent} alertas por Telegram.", level=messages.SUCCESS)
             return
         self.message_user(
             request,
-            "No habia alertas activas para los scrapers seleccionados o no hay destinatarios configurados.",
+            "No habia alertas activas para los scrapers seleccionados o no hay chats configurados.",
             level=messages.WARNING,
         )
 

@@ -8,6 +8,7 @@ from django.core.management import call_command
 from django.utils import timezone
 
 from core.models import ScraperHealth
+from core.services.scraper_execution_service import ScraperExecutionService
 
 
 @dataclass(frozen=True)
@@ -120,12 +121,26 @@ class ScraperHealthService:
 
     @classmethod
     def mark_failure(cls, scraper_key: str, exc: Exception) -> ScraperHealth:
+        return cls.mark_failure_message(
+            scraper_key,
+            error_message=str(exc) or exc.__class__.__name__,
+            error_traceback=traceback.format_exc(),
+        )
+
+    @classmethod
+    def mark_failure_message(
+        cls,
+        scraper_key: str,
+        *,
+        error_message: str,
+        error_traceback: str = "",
+    ) -> ScraperHealth:
         now = timezone.now()
         monitor = cls.get_or_create_monitor(scraper_key)
         monitor.last_status = ScraperHealth.Status.FAILED
         monitor.last_finished_at = now
-        monitor.last_error_message = cls._truncate_error(str(exc) or exc.__class__.__name__)
-        monitor.last_error_traceback = traceback.format_exc()
+        monitor.last_error_message = cls._truncate_error(error_message)
+        monitor.last_error_traceback = error_traceback or ""
         monitor.consecutive_failures += 1
         monitor.save(
             update_fields=[
@@ -141,14 +156,35 @@ class ScraperHealthService:
 
     @classmethod
     def run_registered(cls, scraper_key: str):
+        from core.services.scraper_notification_service import ScraperNotificationService
+
         definition = cls.get_definition(scraper_key)
+        execution = ScraperExecutionService.start_execution(scraper_key)
         cls.mark_running(scraper_key)
         try:
             result = call_command(definition.command_name)
         except Exception as exc:
             cls.mark_failure(scraper_key, exc)
+            failure_result = ScraperExecutionService.finalize_failure(execution, exc)
+            sent_incidents = ScraperNotificationService.notify_pending_incidents(
+                incidents=failure_result["incidents"]
+            )
+            if sent_incidents:
+                ScraperNotificationService.mark_current_health_alert_as_notified(scraper_key)
             raise
-        cls.mark_success(scraper_key)
+        evaluation = ScraperExecutionService.finalize_success(execution)
+        sent_incidents = ScraperNotificationService.notify_pending_incidents(
+            incidents=evaluation["incidents"]
+        )
+        if evaluation["has_incident"]:
+            cls.mark_failure_message(
+                scraper_key,
+                error_message=evaluation["health_error_message"] or "La corrida no dejo grupos utilizables.",
+            )
+            if sent_incidents:
+                ScraperNotificationService.mark_current_health_alert_as_notified(scraper_key)
+        else:
+            cls.mark_success(scraper_key)
         return result
 
     @classmethod

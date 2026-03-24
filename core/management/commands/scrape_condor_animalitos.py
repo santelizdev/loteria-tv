@@ -148,6 +148,8 @@ class Command(BaseCommand):
                     "animal_name": r["animal"],
                     "animal_image_url": r["image"],
                     "provider_logo_url": provider.logo_url or "",
+                    "result_origin": AnimalitoResult.ResultOrigin.AUTOMATIC_VALID,
+                    "source_incident": None,
                 },
             )
             if was_created:

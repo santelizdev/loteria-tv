@@ -274,7 +274,12 @@ def _save_row(*, provider: Provider, draw_date, row: ParsedRow) -> bool:
         return False
 
     # extra con signo cuando aplique.
-    defaults = {"winning_number": row.number, "image_url": ""}
+    defaults = {
+        "winning_number": row.number,
+        "image_url": "",
+        "result_origin": CurrentResult.ResultOrigin.AUTOMATIC_VALID,
+        "source_incident": None,
+    }
 
     # IMPORTANTE: tu modelo real tiene extra JSONField según tu resumen.
     # Si en algún entorno no existe, esto fallará y debes alinear el modelo.

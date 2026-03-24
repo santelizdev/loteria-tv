@@ -31,4 +31,7 @@ def archive_daily():
 
 @shared_task
 def notify_scraper_alerts():
-    return ScraperNotificationService.notify_active_alerts()
+    return {
+        "health_sent": ScraperNotificationService.notify_active_alerts(),
+        "incident_sent": ScraperNotificationService.notify_pending_incidents(),
+    }

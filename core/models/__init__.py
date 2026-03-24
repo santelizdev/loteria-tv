@@ -11,3 +11,6 @@ from .animalito_archive import AnimalitoArchive
 from .device_telemetry_snapshot import DeviceTelemetrySnapshot
 from .device_telemetry_event import DeviceTelemetryEvent
 from .scraper_health import ScraperHealth
+from .scraper_execution import ScraperExecution
+from .scraper_incident import ScraperIncident
+from .manual_result_intervention import ManualResultIntervention

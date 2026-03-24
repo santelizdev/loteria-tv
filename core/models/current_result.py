@@ -7,6 +7,10 @@ from .provider import Provider
 
 
 class CurrentResult(models.Model):
+    class ResultOrigin(models.TextChoices):
+        AUTOMATIC_VALID = "automatic_valid", "Automatic valid"
+        MANUAL_CONTINGENCY = "manual_contingency", "Manual contingency"
+
     """
     Current-day results for table-based lotteries (triples).
 
@@ -26,8 +30,22 @@ class CurrentResult(models.Model):
     image_url = models.URLField(blank=True)
 
     extra = models.JSONField(blank=True, null=True)
+    result_origin = models.CharField(
+        max_length=32,
+        choices=ResultOrigin.choices,
+        default=ResultOrigin.AUTOMATIC_VALID,
+        db_index=True,
+    )
+    source_incident = models.ForeignKey(
+        "core.ScraperIncident",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="current_results",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["provider__name", "draw_time"]

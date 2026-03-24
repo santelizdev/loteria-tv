@@ -3,13 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta
 
+import requests
 from django.conf import settings
-from django.contrib.auth import get_user_model
-from django.core.mail import send_mail
-from django.db.models import Q
 from django.utils import timezone
 
-from core.models import ScraperHealth
+from core.models import ScraperHealth, ScraperIncident
 from core.services.scraper_health_service import ScraperHealthService
 
 
@@ -20,34 +18,29 @@ class NotificationDecision:
     alert: dict
 
 
+@dataclass(frozen=True)
+class IncidentNotificationDecision:
+    incident: ScraperIncident
+    message: str
+
+
 class ScraperNotificationService:
     @classmethod
     def get_recipients(cls) -> list[str]:
-        recipients = set(cls._normalize_recipients(getattr(settings, "SCRAPER_ALERT_EMAILS", [])))
-        recipients.update(user.email for user in cls.get_recipient_users() if user.email)
-        return sorted(recipients)
-
-    @classmethod
-    def get_recipient_users(cls):
-        usernames = cls._normalize_recipients(getattr(settings, "SCRAPER_ALERT_USERNAMES", []))
-        groups = cls._normalize_recipients(getattr(settings, "SCRAPER_ALERT_GROUPS", []))
-
-        if not usernames and not groups:
-            return get_user_model().objects.none()
-
-        query = Q(is_active=True)
-        recipient_query = Q()
-        if usernames:
-            recipient_query |= Q(username__in=usernames)
-        if groups:
-            recipient_query |= Q(groups__name__in=groups)
-
-        return get_user_model().objects.filter(query & recipient_query).exclude(email="").distinct()
+        return cls._normalize_recipients(getattr(settings, "SCRAPER_TELEGRAM_CHAT_IDS", []))
 
     @classmethod
     def get_cooldown(cls) -> timedelta:
         minutes = int(getattr(settings, "SCRAPER_ALERT_NOTIFY_COOLDOWN_MINUTES", 180))
         return timedelta(minutes=max(1, minutes))
+
+    @classmethod
+    def is_telegram_configured(cls) -> bool:
+        return bool(cls.get_recipients() and cls.get_bot_token())
+
+    @classmethod
+    def get_bot_token(cls) -> str:
+        return getattr(settings, "SCRAPER_TELEGRAM_BOT_TOKEN", "").strip()
 
     @classmethod
     def collect_pending_notifications(cls, *, now=None, monitors=None, force=False) -> list[NotificationDecision]:
@@ -75,8 +68,7 @@ class ScraperNotificationService:
 
     @classmethod
     def notify_active_alerts(cls, *, now=None, monitors=None, force=False) -> int:
-        recipients = cls.get_recipients()
-        if not recipients:
+        if not cls.is_telegram_configured():
             return 0
 
         current_dt = now or timezone.now()
@@ -84,16 +76,8 @@ class ScraperNotificationService:
         if not decisions:
             return 0
 
-        subject = cls.build_subject(decisions)
-        message = cls.build_message(decisions, current_dt)
-
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
-            recipient_list=recipients,
-            fail_silently=False,
-        )
+        message = cls.build_health_message(decisions, current_dt)
+        cls._dispatch_message(message)
 
         for decision in decisions:
             decision.monitor.last_notified_at = current_dt
@@ -101,6 +85,56 @@ class ScraperNotificationService:
             decision.monitor.save(update_fields=["last_notified_at", "last_notified_signature", "updated_at"])
 
         return len(decisions)
+
+    @classmethod
+    def collect_pending_incident_notifications(
+        cls,
+        *,
+        incidents=None,
+        force=False,
+    ) -> list[IncidentNotificationDecision]:
+        queryset = cls._normalize_incidents(incidents)
+        if not force:
+            queryset = [incident for incident in queryset if not incident.alert_sent]
+        return [
+            IncidentNotificationDecision(
+                incident=incident,
+                message=cls.build_incident_message(incident),
+            )
+            for incident in queryset
+            if incident.status == ScraperIncident.Status.OPEN
+        ]
+
+    @classmethod
+    def notify_pending_incidents(cls, *, incidents=None, now=None, force=False) -> int:
+        if not cls.is_telegram_configured():
+            return 0
+
+        current_dt = now or timezone.now()
+        decisions = cls.collect_pending_incident_notifications(incidents=incidents, force=force)
+        if not decisions:
+            return 0
+
+        sent = 0
+        for decision in decisions:
+            cls._dispatch_message(decision.message)
+            incident = decision.incident
+            incident.alert_sent = True
+            incident.alert_sent_at = current_dt
+            incident.save(update_fields=["alert_sent", "alert_sent_at", "updated_at"])
+            sent += 1
+        return sent
+
+    @classmethod
+    def mark_current_health_alert_as_notified(cls, scraper_key: str, *, now=None) -> None:
+        current_dt = now or timezone.now()
+        alert = ScraperHealthService.get_alert(scraper_key, now=current_dt)
+        if not alert:
+            return
+        monitor = ScraperHealthService.get_or_create_monitor(scraper_key)
+        monitor.last_notified_at = current_dt
+        monitor.last_notified_signature = cls.build_signature(alert)
+        monitor.save(update_fields=["last_notified_at", "last_notified_signature", "updated_at"])
 
     @staticmethod
     def _normalize_recipients(value) -> list[str]:
@@ -137,32 +171,83 @@ class ScraperNotificationService:
         )
 
     @staticmethod
-    def build_subject(decisions: list[NotificationDecision]) -> str:
-        count = len(decisions)
-        if count == 1:
-            return f"[LoteriaTV] Alerta de scraper: {decisions[0].alert['label']}"
-        return f"[LoteriaTV] {count} alertas de scrapers activas"
-
-    @staticmethod
-    def build_message(decisions: list[NotificationDecision], current_dt) -> str:
+    def build_health_message(decisions: list[NotificationDecision], current_dt) -> str:
         lines = [
-            "Se detectaron alertas activas de scrapers.",
-            f"Fecha: {timezone.localtime(current_dt).isoformat()}",
+            "LoteriaTV - Alertas activas de scrapers",
+            f"Fecha: {timezone.localtime(current_dt).strftime('%Y-%m-%d %H:%M:%S %Z')}",
             "",
         ]
         for decision in decisions:
             alert = decision.alert
             lines.extend(
                 [
-                    f"- {alert['label']}",
-                    f"  status: {alert.get('status') or '-'}",
+                    f"* {alert['label']}",
+                    f"  tipo: {alert.get('alert_kind') or '-'}",
+                    f"  estado: {alert.get('status') or '-'}",
                     f"  mensaje: {alert.get('message') or '-'}",
                     f"  error: {alert.get('last_error_message') or '-'}",
                     f"  ultimo_ok: {alert.get('last_success_at') or '-'}",
-                    f"  ultimo_inicio: {alert.get('last_started_at') or '-'}",
-                    f"  ultimo_fin: {alert.get('last_finished_at') or '-'}",
                     f"  fallas_consecutivas: {alert.get('consecutive_failures') or 0}",
                     "",
                 ]
             )
-        return "\n".join(lines).strip() + "\n"
+        return "\n".join(lines).strip()
+
+    @classmethod
+    def build_incident_message(cls, incident: ScraperIncident) -> str:
+        lines = [
+            "LoteriaTV - Incidente de scraper",
+            f"Incidente: #{incident.id}",
+            f"Scraper: {incident.label}",
+            f"Fecha objetivo: {incident.draw_date}",
+            f"Estado: {incident.status}",
+            f"Severidad: {incident.severity or '-'}",
+            f"Motivo: {incident.failure_reason_code or '-'}",
+            f"Grupo: {cls._build_incident_target(incident)}",
+            f"Resumen: {incident.summary or '-'}",
+            f"Evidencia: {incident.evidence_summary or '-'}",
+        ]
+        admin_url = cls.build_incident_admin_url(incident)
+        if admin_url:
+            lines.append(f"Admin: {admin_url}")
+        return "\n".join(lines)
+
+    @classmethod
+    def build_incident_admin_url(cls, incident: ScraperIncident) -> str:
+        base_url = getattr(settings, "SCRAPER_ADMIN_BASE_URL", "").rstrip("/")
+        if not base_url:
+            return ""
+        return f"{base_url}/admin/core/scraperincident/{incident.pk}/change/"
+
+    @staticmethod
+    def _build_incident_target(incident: ScraperIncident) -> str:
+        provider_name = incident.provider_name or "scraper"
+        draw_time = incident.draw_time.strftime("%H:%M") if incident.draw_time else "-"
+        return f"{provider_name} @ {draw_time}"
+
+    @classmethod
+    def _dispatch_message(cls, message: str) -> None:
+        bot_token = cls.get_bot_token()
+        base_url = getattr(settings, "SCRAPER_TELEGRAM_API_BASE_URL", "https://api.telegram.org").rstrip("/")
+        url = f"{base_url}/bot{bot_token}/sendMessage"
+        for chat_id in cls.get_recipients():
+            response = requests.post(
+                url,
+                json={
+                    "chat_id": chat_id,
+                    "text": message,
+                    "disable_web_page_preview": True,
+                },
+                timeout=15,
+            )
+            response.raise_for_status()
+
+    @staticmethod
+    def _normalize_incidents(incidents) -> list[ScraperIncident]:
+        if incidents is None:
+            return list(
+                ScraperIncident.objects.filter(status=ScraperIncident.Status.OPEN).order_by("last_detected_at")
+            )
+        if isinstance(incidents, ScraperIncident):
+            return [incidents]
+        return list(incidents)

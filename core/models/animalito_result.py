@@ -3,6 +3,9 @@ from .provider import Provider
 
 
 class AnimalitoResult(models.Model):
+    class ResultOrigin(models.TextChoices):
+        AUTOMATIC_VALID = "automatic_valid", "Automatic valid"
+        MANUAL_CONTINGENCY = "manual_contingency", "Manual contingency"
     """
     Guarda resultados de animalitos por proveedor y horario.
     - Normalización: Provider es FK (evita duplicar strings)
@@ -30,8 +33,22 @@ class AnimalitoResult(models.Model):
     # URLs (guardamos url completa normalizada)
     animal_image_url = models.URLField()
     provider_logo_url = models.URLField()
+    result_origin = models.CharField(
+        max_length=32,
+        choices=ResultOrigin.choices,
+        default=ResultOrigin.AUTOMATIC_VALID,
+        db_index=True,
+    )
+    source_incident = models.ForeignKey(
+        "core.ScraperIncident",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="animalito_results",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["provider__name", "draw_time"]

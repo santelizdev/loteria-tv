@@ -7,13 +7,13 @@ from core.services.scraper_notification_service import ScraperNotificationServic
 
 
 class Command(BaseCommand):
-    help = "Envía notificaciones internas por email para alertas activas de scrapers."
+    help = "Envía notificaciones internas por Telegram para incidentes y alertas activas de scrapers."
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--dry-run",
             action="store_true",
-            help="Muestra las alertas/destinatarios que se notificarian sin enviar email.",
+            help="Muestra las alertas/destinatarios que se notificarian sin enviar Telegram.",
         )
         parser.add_argument(
             "--force",
@@ -45,18 +45,33 @@ class Command(BaseCommand):
 
         if dry_run:
             recipients = ScraperNotificationService.get_recipients()
-            decisions = ScraperNotificationService.collect_pending_notifications(
+            health_decisions = ScraperNotificationService.collect_pending_notifications(
                 monitors=monitors,
                 force=force,
             )
-            self.stdout.write(f"recipients={', '.join(recipients) if recipients else '-'}")
-            self.stdout.write(f"pending_notifications={len(decisions)}")
-            for decision in decisions:
+            incident_decisions = ScraperNotificationService.collect_pending_incident_notifications(
+                force=force,
+            )
+            self.stdout.write(f"telegram_chat_ids={', '.join(recipients) if recipients else '-'}")
+            self.stdout.write(f"pending_health_notifications={len(health_decisions)}")
+            self.stdout.write(f"pending_incident_notifications={len(incident_decisions)}")
+            for decision in health_decisions:
                 alert = decision.alert
                 self.stdout.write(
-                    f"- {alert['scraper_key']} [{alert['alert_kind']}] {alert['message']}"
+                    f"- health {alert['scraper_key']} [{alert['alert_kind']}] {alert['message']}"
+                )
+            for decision in incident_decisions:
+                incident = decision.incident
+                self.stdout.write(
+                    f"- incident #{incident.id} {incident.scraper_key} "
+                    f"{incident.provider_name or '-'} {incident.failure_reason_code}"
                 )
             return
 
-        sent = ScraperNotificationService.notify_active_alerts(monitors=monitors, force=force)
-        self.stdout.write(self.style.SUCCESS(f"Scraper notifications sent={sent}"))
+        health_sent = ScraperNotificationService.notify_active_alerts(monitors=monitors, force=force)
+        incident_sent = ScraperNotificationService.notify_pending_incidents(force=force)
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Scraper notifications sent health={health_sent} incident={incident_sent}"
+            )
+        )

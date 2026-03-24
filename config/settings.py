@@ -44,6 +44,37 @@ SCRAPER_ALERT_GROUPS = [
 SCRAPER_ALERT_NOTIFY_COOLDOWN_MINUTES = int(
     os.getenv("SCRAPER_ALERT_NOTIFY_COOLDOWN_MINUTES", "180")
 )
+SCRAPER_ALERT_PRIMARY_CHANNEL = (os.getenv("SCRAPER_ALERT_PRIMARY_CHANNEL", "telegram").strip().lower() or "telegram")
+SCRAPER_TELEGRAM_BOT_TOKEN = os.getenv("SCRAPER_TELEGRAM_BOT_TOKEN", "").strip()
+SCRAPER_TELEGRAM_CHAT_IDS = [
+    value.strip()
+    for value in os.getenv("SCRAPER_TELEGRAM_CHAT_IDS", "").split(",")
+    if value.strip()
+]
+SCRAPER_TELEGRAM_API_BASE_URL = (
+    os.getenv("SCRAPER_TELEGRAM_API_BASE_URL", "https://api.telegram.org").strip()
+    or "https://api.telegram.org"
+)
+SCRAPER_ADMIN_BASE_URL = os.getenv("SCRAPER_ADMIN_BASE_URL", "").rstrip("/")
+SCRAPER_INCIDENT_VIEWER_GROUPS = [
+    value.strip()
+    for value in os.getenv("SCRAPER_INCIDENT_VIEWER_GROUPS", "Administradores").split(",")
+    if value.strip()
+]
+SCRAPER_INCIDENT_RESOLVER_GROUPS = [
+    value.strip()
+    for value in os.getenv("SCRAPER_INCIDENT_RESOLVER_GROUPS", "Administradores").split(",")
+    if value.strip()
+]
+SCRAPER_RESULT_AUTOMATIC_ORIGIN_LABEL = (
+    os.getenv("SCRAPER_RESULT_AUTOMATIC_ORIGIN_LABEL", "automatic_valid").strip()
+    or "automatic_valid"
+)
+SCRAPER_RESULT_MANUAL_ORIGIN_LABEL = (
+    os.getenv("SCRAPER_RESULT_MANUAL_ORIGIN_LABEL", "manual_contingency").strip()
+    or "manual_contingency"
+)
+ADMIN_ACTIVITY_TELEGRAM_ENABLED = os.getenv("ADMIN_ACTIVITY_TELEGRAM_ENABLED", "0") == "1"
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"

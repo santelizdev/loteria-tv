@@ -411,6 +411,8 @@ class Command(BaseCommand):
                     "animal_name": r["animal_name"],
                     "animal_image_url": r["animal_image_url"],
                     "provider_logo_url": r.get("provider_logo_url") or "",
+                    "result_origin": AnimalitoResult.ResultOrigin.AUTOMATIC_VALID,
+                    "source_incident": None,
                 },
             )
 

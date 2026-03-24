@@ -10,5 +10,8 @@ from .admin_configs import (  # noqa: F401
     result_archive,
     transmission,
     animalito_result,
+    manual_result_intervention,
+    scraper_execution,
+    scraper_incident,
     scraper_health,
 )
