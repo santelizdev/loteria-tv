@@ -14,3 +14,5 @@ from .scraper_health import ScraperHealth
 from .scraper_execution import ScraperExecution
 from .scraper_incident import ScraperIncident
 from .manual_result_intervention import ManualResultIntervention
+from .weekly_device_report import WeeklyDeviceReport
+from .cruz_daily_content import CruzDailyContent

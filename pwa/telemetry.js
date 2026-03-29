@@ -16,7 +16,7 @@
   }
 
   function getApiBase() {
-    return getConfig().API_BASE || "https://api.ssganador.lat";
+    return getConfig().API_BASE || window.location.origin;
   }
 
   function buildFormBody(data) {

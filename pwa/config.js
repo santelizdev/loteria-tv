@@ -1,6 +1,8 @@
 // pwa/config.js
 (() => {
   const APP_VERSION = "__APP_VERSION__";
+  const origin = window.location.origin;
+  const wsOrigin = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
   const isLocal =
     location.hostname === "localhost" ||
     location.hostname === "127.0.0.1" ||
@@ -8,8 +10,8 @@
 
   const params = new URLSearchParams(location.search);
 
-  const defaultApiBase = isLocal ? "http://127.0.0.1:8000" : "https://api.ssganador.lat";
-  const defaultWsBase = isLocal ? "ws://127.0.0.1:8000" : "wss://api.ssganador.lat";
+  const defaultApiBase = origin;
+  const defaultWsBase = wsOrigin;
 
   const queryApiBase = (params.get("api_base") || "").trim();
   const queryWsBase = (params.get("ws_base") || "").trim();

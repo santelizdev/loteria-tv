@@ -1,86 +1,90 @@
 # Lotería TV (Django + Channels + PWA)
 
-Sistema para **mostrar resultados de lotería en pantallas tipo TV** mediante una **PWA** (frontend liviano) y un backend **Django** que expone APIs y comunicación en tiempo real por **WebSockets (Django Channels + Redis)**.
+Sistema para mostrar resultados de lotería en pantallas tipo TV mediante una PWA liviana y un backend Django con APIs HTTP y WebSockets.
 
 Incluye:
-- Resultados **Triples** (CurrentResult) por proveedor.
-- Resultados **Animalitos** por proveedor.
-- Registro de dispositivos (TVs) con `activation_code`.
-- Activación/asignación a sucursal (branch) y validación de suscripción.
-- Cache en Redis para reducir carga de base de datos.
-- PWA con rotación/paginación automática de vistas (Triples / Animalitos).
+- Resultados Triples y Animalitos.
+- Registro y activación de dispositivos.
+- Validación por sucursal y suscripción.
+- Redis para cache y Channels.
+- Panel admin para operación y monitoreo.
 
----
+## Stack unificado
 
-## Stack
+Servicios principales:
+- `gateway`: Nginx sirve la PWA, `static`, `media` y hace proxy a Django y WebSockets.
+- `app`: Django ASGI con Daphne.
+- `worker`: Celery worker.
+- `beat`: Celery beat.
+- `postgres`: base de datos.
+- `redis`: cache, broker y channel layer.
 
-**Backend**
-- Python / Django
-- Django REST Framework
-- Django Channels (ASGI)
-- Redis (cache + channel layer)
-- Daphne (servidor ASGI)
+Con esto local y producción comparten la misma topología base: un solo stack Docker y un único punto de entrada HTTP.
 
-**Frontend**
-- PWA (HTML/CSS/JS)
-- Polling controlado + WebSocket para eventos
-- UI estilo TV (4 columnas por página)
+## Arranque local con Docker
 
----
-
-## Estructura (alto nivel)
-
-
----
-
-## Requisitos
-
-- Python 3.11+ (recomendado)
-- Redis
-- Virtualenv recomendado
-
----
-
-## Setup Backend (local)
-
-### 1) Crear entorno e instalar dependencias
-```bash
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 2) Separar entorno local de Docker
-El proyecto ahora carga variables en este orden:
-
-- Variables reales del sistema o del proceso.
-- `.env.local` para tu host local.
-- `.env` como base compartida.
-
-Docker sigue usando `.env.docker` vía `docker compose`, así que tu `.env.local` no interfiere con los contenedores.
-
-Ejemplo rápido para correr comandos Django desde tu host:
+Levanta todo el stack:
 
 ```bash
-python manage.py check_ops_health --strict
+docker compose up --build
 ```
 
-## Diagnóstico remoto Smart TV
+Puntos de acceso:
+- App/PWA: `http://127.0.0.1:8080`
+- Admin Django: `http://127.0.0.1:8080/admin/`
+- API: `http://127.0.0.1:8080/api/`
+- WebSocket: `ws://127.0.0.1:8080/ws/...`
 
-Se añadió un checklist operativo para validar incidencias de ciclo/tránsito de pantallas en PWA (Venezuela): `pwa/TV_VENEZUELA_DIAGNOSTICO.md`.
+Notas:
+- La PWA ahora usa mismo origen por defecto, así que ya no necesita un contenedor o deploy separado para hablar con el backend.
+- `.env.local` queda reservado para correr Django desde el host.
+- `.env.docker` define el entorno del stack Docker.
 
+## Producción
 
+La idea recomendada es replicar el mismo `docker compose` y exponer solo el `gateway`.
 
-## Seguridad y QA
+Opciones habituales:
+- Publicar el puerto del `gateway` directamente detrás de un firewall o balanceador.
+- Mantener Hestia solo como reverse proxy hacia el contenedor `gateway`, sin volver a copiar la PWA a `public_html`.
 
-Checklist operativo documentado en `docs/security_qa_checklist.md`.
+Resultado esperado:
+- Un solo dominio principal sirviendo PWA y backend.
+- Sin separación manual entre carpeta web de Hestia y carpeta del proyecto Django.
+- Mismo comportamiento entre local y prod para `/`, `/api/`, `/admin/`, `/ws/` y `/static/`.
+
+## Variables de entorno
+
+Orden de carga fuera de Docker:
+- Variables reales del sistema o proceso.
+- `.env.local`
+- `.env`
+
+En Docker:
+- `docker compose` usa `.env.docker` para `app`, `worker` y `beat`.
+
+## Comandos útiles
+
+Host local:
+
+```bash
+./venv/bin/python manage.py check_ops_health --strict
+./venv/bin/python manage.py notify_scraper_alerts --dry-run
+```
+
+Dentro del stack:
+
+```bash
+docker compose exec app python manage.py migrate
+docker compose exec app python manage.py createsuperuser
+docker compose exec app python manage.py check_ops_health --strict
+```
 
 ## Monitoreo interno de scrapers
 
 El backend incluye control interno de salud para scrapers en Django Admin.
 
 Variables opcionales:
-
 - `SCRAPER_ALERT_EMAILS=ops1@dominio.com,ops2@dominio.com`
 - `SCRAPER_ALERT_USERNAMES=admin1,operaciones1`
 - `SCRAPER_ALERT_GROUPS=Administradores,Operadores`
@@ -101,9 +105,13 @@ python manage.py check_ops_health --strict
 ```
 
 Notas:
+- Todo este monitoreo es interno y vive en Django Admin y comandos de operación.
+- `Scraper health` resume `OK / fallo hoy / sin OK hoy / stale`.
+- Si producción usa timers externos en vez de Celery, deben ejecutar `python manage.py run_scraper_suite`.
+- El timer de retention en producción debe apuntar a `scripts/daily_retention.sh`.
+- `DeviceTelemetryEvent` persiste `LOAD_ERROR` y `LOW_MEMORY`; los eventos informativos solo actualizan snapshot.
 
-- Todo este monitoreo es interno y solo vive en Django Admin / comandos de operación.
-- El admin de `Scraper health` resume `OK / fallo hoy / sin OK hoy / stale` y permite forzar aviso interno o resetear cooldown.
-- Si producción usa `systemd timer` en vez de Celery, el timer debe ejecutar `python manage.py run_scraper_suite` para que el monitor se actualice correctamente.
-- El timer de retention en producción debe apuntar a `scripts/daily_retention.sh`, archivo versionado dentro del repo.
-- `DeviceTelemetryEvent` queda orientado a incidentes: persiste `LOAD_ERROR` y `LOW_MEMORY`; los eventos informativos solo actualizan snapshot.
+## Referencias operativas
+
+- Diagnóstico PWA TV: `pwa/TV_VENEZUELA_DIAGNOSTICO.md`
+- Seguridad y QA: `docs/security_qa_checklist.md`

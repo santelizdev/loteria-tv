@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from decimal import Decimal
+from datetime import date, datetime, timedelta
+from tempfile import NamedTemporaryFile
 from unittest.mock import call, patch
 
 from django.contrib.admin.models import ADDITION, CHANGE, DELETION, LogEntry
@@ -9,16 +11,19 @@ from django.contrib.auth.models import Group
 from django.contrib.contenttypes.models import ContentType
 from django.test import TestCase, override_settings
 from django.core.management import call_command
+from django.urls import reverse
 from django.utils import timezone
 
 from core.models import (
     Branch,
     Client,
+    CruzDailyContent,
     CurrentResult,
     Device,
     DeviceTelemetryEvent,
     DeviceTelemetrySnapshot,
     Provider,
+    ScraperExecution,
     ScraperHealth,
     Transmission,
 )
@@ -234,6 +239,328 @@ class ScraperNotificationServiceTestCase(TestCase):
 
         self.assertEqual(sent, 1)
         mock_post.assert_called_once()
+
+
+@override_settings(CACHES=TEST_CACHES, CHANNEL_LAYERS=TEST_CHANNEL_LAYERS, WEEKLY_DEVICE_RATE_USD="3")
+class WeeklyDeviceReportAdminTestCase(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.user = user_model.objects.create_superuser(
+            username="billing-admin",
+            email="billing@example.com",
+            password="secret123",
+        )
+        self.client_model = Client.objects.create(name="Cliente Billing")
+        self.active_branch = Branch.objects.create(
+            client=self.client_model,
+            name="Sucursal Activa",
+            is_active=True,
+            paid_until=timezone.now() + timedelta(days=7),
+        )
+        self.inactive_branch = Branch.objects.create(
+            client=self.client_model,
+            name="Sucursal Inactiva",
+            is_active=False,
+            paid_until=timezone.now() + timedelta(days=7),
+        )
+        Device.objects.create(
+            device_id="tv-billing-001",
+            activation_code="BILL01",
+            is_active=True,
+            branch=self.active_branch,
+        )
+        Device.objects.create(
+            device_id="tv-billing-002",
+            activation_code="BILL02",
+            is_active=True,
+            branch=self.inactive_branch,
+        )
+        Device.objects.create(
+            device_id="tv-billing-003",
+            activation_code="BILL03",
+            is_active=False,
+            branch=self.active_branch,
+        )
+        second_group_start = timezone.now() + timedelta(days=7)
+        self.second_group_branch = Branch.objects.create(
+            client=self.client_model,
+            name="Sucursal Segundo Grupo",
+            is_active=True,
+            membership_started_at=second_group_start,
+            paid_until=second_group_start + timedelta(days=7),
+        )
+        Device.objects.create(
+            device_id="tv-billing-004",
+            activation_code="BILL04",
+            is_active=True,
+            branch=self.second_group_branch,
+        )
+
+    def test_weekly_report_admin_shows_only_operational_devices(self):
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse("admin:core_weeklydevicereport_changelist"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Cliente Billing")
+        self.assertContains(response, "BILL01")
+        self.assertContains(response, "BILL04")
+        self.assertNotContains(response, "BILL02")
+        self.assertNotContains(response, "BILL03")
+        self.assertEqual(response.context["summary"]["device_count"], 2)
+        self.assertEqual(response.context["summary"]["weekly_total_usd"], Decimal("6"))
+        self.assertContains(response, self.active_branch.paid_until.strftime("%Y-%m-%d"))
+        self.assertContains(response, self.active_branch.membership_started_at.strftime("%Y-%m-%d"))
+        self.assertContains(response, self.second_group_branch.paid_until.strftime("%Y-%m-%d"))
+        client_row = response.context["report_rows"][0]
+        self.assertEqual(len(client_row["membership_groups"]), 2)
+        self.assertEqual(
+            sorted(group["weekly_total_usd"] for group in client_row["membership_groups"]),
+            [Decimal("3"), Decimal("3")],
+        )
+
+
+class BranchMembershipWindowTestCase(TestCase):
+    def test_branch_sets_membership_started_at_from_current_window(self):
+        client = Client.objects.create(name="Cliente Membresia")
+        paid_until = timezone.now() + timedelta(days=7)
+
+        branch = Branch.objects.create(
+            client=client,
+            name="Sucursal Membresia",
+            paid_until=paid_until,
+        )
+
+        self.assertIsNotNone(branch.membership_started_at)
+        self.assertEqual(branch.membership_started_at, paid_until - timedelta(days=7))
+
+    def test_branch_extension_moves_membership_started_at_to_previous_paid_until(self):
+        client = Client.objects.create(name="Cliente Extension")
+        initial_paid_until = timezone.now() + timedelta(days=7)
+        branch = Branch.objects.create(
+            client=client,
+            name="Sucursal Extension",
+            paid_until=initial_paid_until,
+        )
+
+        previous_paid_until = branch.paid_until
+        branch.paid_until = previous_paid_until + timedelta(days=7)
+        branch.save()
+
+        self.assertEqual(branch.membership_started_at, previous_paid_until)
+
+
+class WarmScraperDataCommandTestCase(TestCase):
+    @patch("core.management.commands.warm_scraper_data.ScraperHealthService.run_registered")
+    def test_warm_scraper_data_runs_when_last_success_is_stale(self, mock_run_registered):
+        fixed_now = timezone.make_aware(
+            datetime(2026, 3, 29, 12, 0, 0),
+            timezone.get_current_timezone(),
+        )
+        definition = ScraperHealthService.get_definition("condor_animalitos")
+        monitor = ScraperHealthService.get_or_create_monitor("condor_animalitos")
+        monitor.last_status = ScraperHealth.Status.SUCCESS
+        monitor.last_success_at = fixed_now - timedelta(hours=4)
+        monitor.save(update_fields=["last_status", "last_success_at", "updated_at"])
+
+        with patch.dict(ScraperHealthService.REGISTRY, {"condor_animalitos": definition}, clear=True):
+            with patch("core.management.commands.warm_scraper_data.timezone.now", return_value=fixed_now):
+                call_command("warm_scraper_data", max_age_minutes=90)
+
+        mock_run_registered.assert_called_once_with("condor_animalitos")
+
+    @patch("core.management.commands.warm_scraper_data.ScraperHealthService.run_registered")
+    def test_warm_scraper_data_skips_when_last_success_is_recent(self, mock_run_registered):
+        fixed_now = timezone.make_aware(
+            datetime(2026, 3, 29, 12, 0, 0),
+            timezone.get_current_timezone(),
+        )
+        definition = ScraperHealthService.get_definition("condor_animalitos")
+        monitor = ScraperHealthService.get_or_create_monitor("condor_animalitos")
+        monitor.last_status = ScraperHealth.Status.SUCCESS
+        monitor.last_success_at = fixed_now - timedelta(minutes=20)
+        monitor.save(update_fields=["last_status", "last_success_at", "updated_at"])
+
+        with patch.dict(ScraperHealthService.REGISTRY, {"condor_animalitos": definition}, clear=True):
+            with patch("core.management.commands.warm_scraper_data.timezone.now", return_value=fixed_now):
+                call_command("warm_scraper_data", max_age_minutes=90)
+
+        mock_run_registered.assert_not_called()
+
+    @patch("core.management.commands.warm_scraper_data.call_command")
+    def test_warm_scraper_data_runs_cruz_daily_when_missing_for_today(self, mock_call_command):
+        fixed_now = timezone.make_aware(
+            datetime(2026, 3, 29, 12, 0, 0),
+            timezone.get_current_timezone(),
+        )
+
+        with patch.dict(ScraperHealthService.REGISTRY, {}, clear=True):
+            with patch("core.management.commands.warm_scraper_data.timezone.now", return_value=fixed_now):
+                call_command("warm_scraper_data", max_age_minutes=90)
+
+        mock_call_command.assert_called_once_with("scrape_cruz_daily_content")
+
+    @patch("core.management.commands.warm_scraper_data.call_command")
+    def test_warm_scraper_data_skips_cruz_daily_when_today_exists(self, mock_call_command):
+        fixed_now = timezone.make_aware(
+            datetime(2026, 3, 29, 12, 0, 0),
+            timezone.get_current_timezone(),
+        )
+        CruzDailyContent.objects.create(
+            draw_date=fixed_now.date(),
+            card_type=CruzDailyContent.CardType.CRUCETA,
+            title="Cruceta de Hoy",
+            image_url="https://example.com/cruceta.jpg",
+            display_order=0,
+        )
+
+        with patch.dict(ScraperHealthService.REGISTRY, {}, clear=True):
+            with patch("core.management.commands.warm_scraper_data.timezone.now", return_value=fixed_now):
+                call_command("warm_scraper_data", max_age_minutes=90)
+
+        mock_call_command.assert_not_called()
+
+
+class CruzDailyContentCommandTestCase(TestCase):
+    def test_scrape_cruz_daily_content_keeps_only_current_draw_date(self):
+        CruzDailyContent.objects.create(
+            draw_date=date(2026, 3, 28),
+            card_type=CruzDailyContent.CardType.CRUCETA,
+            title="Vieja Cruceta",
+            image_url="https://example.com/old.jpg",
+            display_order=0,
+        )
+
+        html = """
+        <div class="row mb-3">
+          <div class="col-md-4 mb-3">
+            <div class="card bg-primary text-white">
+              <div class="card-body">
+                <h2 class="card-title">Cruceta de Hoy</h2>
+                <img alt="cruz de la suerte hoy 29/3/2026" src="/img/cruzdelasuerte_29-03-2026.jpg">
+              </div>
+            </div>
+          </div>
+          <div class="col-md-4 mb-3">
+            <div class="card bg-primary text-white">
+              <div class="card-body">
+                <h2 class="card-title">Guía y Probables</h2>
+                <img alt="Numeros probables de hoy 29/3/2026" src="/img/numerosguia_29-03-2026.jpg">
+              </div>
+            </div>
+          </div>
+          <div class="col-md-4 mb-3">
+            <div class="card bg-primary text-white">
+              <div class="card-body">
+                <h2 class="card-title">Pirámide de la Suerte</h2>
+                <img alt="Piramide de la suerte 29/3/2026" src="/img/piramidedelasuerte_29-03-2026.jpg">
+              </div>
+            </div>
+          </div>
+        </div>
+        """
+
+        with NamedTemporaryFile("w", suffix=".html", encoding="utf-8") as handle:
+            handle.write(html)
+            handle.flush()
+            call_command("scrape_cruz_daily_content", html_file=handle.name)
+
+        rows = list(CruzDailyContent.objects.order_by("display_order"))
+        self.assertEqual(len(rows), 3)
+        self.assertEqual({row.draw_date for row in rows}, {date(2026, 3, 29)})
+        self.assertEqual(
+            [row.card_type for row in rows],
+            [
+                CruzDailyContent.CardType.CRUCETA,
+                CruzDailyContent.CardType.GUIA,
+                CruzDailyContent.CardType.PIRAMIDE,
+            ],
+        )
+        self.assertFalse(CruzDailyContent.objects.filter(draw_date=date(2026, 3, 28)).exists())
+
+
+@override_settings(CACHES=TEST_CACHES, CHANNEL_LAYERS=TEST_CHANNEL_LAYERS)
+class CruzDailyContentAPITestCase(TestCase):
+    def setUp(self):
+        self.client_model = Client.objects.create(name="Cliente Cruz")
+        self.branch = Branch.objects.create(
+            client=self.client_model,
+            name="Sucursal Cruz",
+            is_active=True,
+            paid_until=timezone.now() + timedelta(days=30),
+        )
+        self.device = Device.objects.create(
+            device_id="tv-cruz-001",
+            activation_code="CRUZ01",
+            is_active=True,
+            branch=self.branch,
+        )
+        CruzDailyContent.objects.bulk_create(
+            [
+                CruzDailyContent(
+                    draw_date=date(2026, 3, 29),
+                    card_type=CruzDailyContent.CardType.GUIA,
+                    title="Guía y Probables",
+                    image_url="https://example.com/guia.jpg",
+                    display_order=1,
+                ),
+                CruzDailyContent(
+                    draw_date=date(2026, 3, 29),
+                    card_type=CruzDailyContent.CardType.PIRAMIDE,
+                    title="Pirámide de la Suerte",
+                    image_url="https://example.com/piramide.jpg",
+                    display_order=2,
+                ),
+                CruzDailyContent(
+                    draw_date=date(2026, 3, 29),
+                    card_type=CruzDailyContent.CardType.CRUCETA,
+                    title="Cruceta de Hoy",
+                    image_url="https://example.com/cruceta.jpg",
+                    display_order=0,
+                ),
+            ]
+        )
+
+    def test_api_returns_cards_for_valid_device_in_display_order(self):
+        response = self.client.get(
+            "/api/cruz-diaria/?code=CRUZ01",
+            REMOTE_ADDR="10.20.30.40",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual([item["type"] for item in payload], ["cruceta", "guia_probables", "piramide"])
+        self.assertEqual({item["draw_date"] for item in payload}, {"2026-03-29"})
+
+
+class PurgeScraperExecutionsCommandTestCase(TestCase):
+    def test_purge_scraper_executions_keeps_recent_rows(self):
+        old_started_at = timezone.make_aware(datetime(2026, 2, 1, 9, 0, 0), timezone.get_current_timezone())
+        recent_started_at = timezone.now() - timedelta(days=2)
+
+        old_execution = ScraperExecution.objects.create(
+            scraper_key="lotoven_triples",
+            label="Triples Lotoven",
+            command_name="scrape_triples",
+            draw_date=old_started_at.date(),
+            status=ScraperExecution.Status.SUCCESS,
+            started_at=old_started_at,
+            finished_at=old_started_at + timedelta(minutes=1),
+        )
+        recent_execution = ScraperExecution.objects.create(
+            scraper_key="condor_animalitos",
+            label="Animalitos Condor",
+            command_name="scrape_condor_animalitos",
+            draw_date=recent_started_at.date(),
+            status=ScraperExecution.Status.SUCCESS,
+            started_at=recent_started_at,
+            finished_at=recent_started_at + timedelta(minutes=1),
+        )
+
+        call_command("purge_scraper_executions", keep_days=14)
+
+        self.assertFalse(ScraperExecution.objects.filter(pk=old_execution.pk).exists())
+        self.assertTrue(ScraperExecution.objects.filter(pk=recent_execution.pk).exists())
 
 
 @override_settings(

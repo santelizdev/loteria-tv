@@ -35,6 +35,10 @@ function isApiRequest(url) {
   );
 }
 
+function isMediaRequest(url) {
+  return url.pathname.indexOf("/media/") === 0;
+}
+
 function isNavigationRequest(request) {
   return request.mode === "navigate" || (request.headers.get("accept") || "").indexOf("text/html") >= 0;
 }
@@ -113,8 +117,16 @@ self.addEventListener("fetch", function (event) {
 
   var url = new URL(request.url);
 
+  if (isMediaRequest(url)) {
+    return;
+  }
+
   if (isApiRequest(url) || !isSameOrigin(url)) {
-    event.respondWith(fetch(request, { cache: "no-store" }));
+    event.respondWith(
+      fetch(request, { cache: "no-store" }).catch(function () {
+        return Response.error();
+      })
+    );
     return;
   }
 
@@ -155,5 +167,9 @@ self.addEventListener("fetch", function (event) {
     return;
   }
 
-  event.respondWith(fetch(request, { cache: "no-store" }));
+  event.respondWith(
+    fetch(request, { cache: "no-store" }).catch(function () {
+      return Response.error();
+    })
+  );
 });

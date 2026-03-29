@@ -284,7 +284,7 @@ class ManualResolutionReopenFlowTestCase(TestCase):
     )
     @patch("core.services.scraper_notification_service.requests.post")
     @patch("core.services.scraper_health_service.call_command")
-    def test_manual_resolution_reopens_if_next_scrape_does_not_recover_automatically(self, mock_call_command, mock_post):
+    def test_manual_resolution_keeps_incident_resolved_when_manual_result_is_still_served(self, mock_call_command, mock_post):
         def partial_rows(_command_name):
             self._seed_partial_automatic_rows()
             return None
@@ -325,10 +325,9 @@ class ManualResolutionReopenFlowTestCase(TestCase):
                     ScraperHealthService.run_registered("lotoven_triples")
 
         incident.refresh_from_db()
-        self.assertEqual(incident.status, ScraperIncident.Status.OPEN)
-        self.assertFalse(incident.alert_sent_at is None)
-        self.assertEqual(incident.occurrence_count, 2)
-        self.assertEqual(mock_post.call_count, 2)
+        self.assertEqual(incident.status, ScraperIncident.Status.RESOLVED)
+        self.assertEqual(incident.occurrence_count, 1)
+        self.assertEqual(mock_post.call_count, 1)
 
 
 class ScraperPermissionServiceTestCase(TestCase):

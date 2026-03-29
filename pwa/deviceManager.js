@@ -21,14 +21,14 @@ function getApiBase() {
   // FIX: window.__APP_CONFIG__?.API_BASE → condicional explícito
   return (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE)
     ? window.__APP_CONFIG__.API_BASE
-    : "https://api.ssganador.lat";
+    : window.location.origin;
 }
 
 function getWsBase() {
   // FIX: window.__APP_CONFIG__?.WS_BASE → condicional explícito
   return (window.__APP_CONFIG__ && window.__APP_CONFIG__.WS_BASE)
     ? window.__APP_CONFIG__.WS_BASE
-    : "wss://api.ssganador.lat";
+    : ((window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host);
 }
 
 function getHeartbeatIntervalMs() {
@@ -126,6 +126,12 @@ function getActivationCode() {
   return (localStorage.getItem("activation_code") || "").trim();
 }
 
+function clearActivationCode() {
+  try {
+    localStorage.removeItem("activation_code");
+  } catch (e) {}
+}
+
 // ============================================
 // DeviceManager como función constructora
 // (compatible con Android 9, sin class/export)
@@ -162,12 +168,32 @@ DeviceManager.prototype.fetchContextOnce = function () {
 DeviceManager.prototype.ensureActivationCode = function () {
   var self = this;
   var code = getActivationCode();
-    if (code) {
-    self.activationCode = code;
-    return Promise.resolve(code);
-    }
+  if (!code) {
+    return self.registerDevice();
+  }
+
+  self.activationCode = code;
 
   var apiBase = getApiBase();
+  return fetch(
+    apiBase + ENDPOINTS.status + "?code=" + encodeURIComponent(code),
+    { cache: "no-store" }
+  ).then(function (res) {
+    if (res.ok) return code;
+    if (res.status !== 404) return code;
+
+    clearActivationCode();
+    self.activationCode = "";
+    return self.registerDevice();
+  }).catch(function () {
+    return code;
+  });
+};
+
+DeviceManager.prototype.registerDevice = function () {
+  var self = this;
+  var apiBase = getApiBase();
+
   return fetch(apiBase + ENDPOINTS.register, {
     method: "POST",
     cache: "no-store",

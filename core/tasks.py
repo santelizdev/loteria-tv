@@ -35,3 +35,13 @@ def notify_scraper_alerts():
         "health_sent": ScraperNotificationService.notify_active_alerts(),
         "incident_sent": ScraperNotificationService.notify_pending_incidents(),
     }
+
+
+@shared_task
+def scrape_cruz_daily_content():
+    return call_command("scrape_cruz_daily_content")
+
+
+@shared_task
+def purge_scraper_executions():
+    return call_command("purge_scraper_executions")

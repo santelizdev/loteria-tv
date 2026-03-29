@@ -19,6 +19,7 @@ from rest_framework.views import APIView
 from core.models import (
     AnimalitoArchive,
     AnimalitoResult,
+    CruzDailyContent,
     CurrentResult,
     Device,
     DeviceTelemetryEvent,
@@ -175,6 +176,16 @@ def _serialize_animalito_result(r) -> Dict[str, str]:
         "animal": r.animal_name or "",
         "image": r.animal_image_url or "",
         "provider_logo_url": provider_logo_url,
+    }
+
+
+def _serialize_cruz_daily_content(item: CruzDailyContent) -> Dict[str, str]:
+    return {
+        "draw_date": item.draw_date.isoformat(),
+        "type": item.card_type,
+        "title": item.title,
+        "image_url": item.image_url,
+        "image_alt": item.image_alt or "",
     }
 
 
@@ -341,6 +352,35 @@ class AnimalitosResultsAPIView(APIView):
         if not bypass_cache and ttl > 0:
             DeviceRedisService.set_cache(cache_key, data, ttl_seconds=ttl)
 
+        return _apply_no_cache_headers(Response(data, status=status.HTTP_200_OK))
+
+
+class CruzDailyContentAPIView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request):
+        activation_code = request.query_params.get("code")
+        ip_address = get_client_ip(request)
+
+        if not activation_code:
+            return _apply_no_cache_headers(
+                Response({"detail": "Missing activation code"}, status=status.HTTP_400_BAD_REQUEST)
+            )
+
+        try:
+            DeviceService.validate_device(activation_code=activation_code, ip_address=ip_address)
+        except PermissionError as e:
+            return _apply_no_cache_headers(Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN))
+
+        target_date = CruzDailyContent.objects.aggregate(last=Max("draw_date"))["last"]
+        if not target_date:
+            return _apply_no_cache_headers(Response([], status=status.HTTP_200_OK))
+
+        data = [
+            _serialize_cruz_daily_content(item)
+            for item in CruzDailyContent.objects.filter(draw_date=target_date).order_by("display_order", "id")
+        ]
         return _apply_no_cache_headers(Response(data, status=status.HTTP_200_OK))
 
 

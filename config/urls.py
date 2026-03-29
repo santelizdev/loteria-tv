@@ -1,18 +1,18 @@
+from django.conf import settings
+from django.conf.urls.static import static
 from django.contrib import admin
 from django.contrib.staticfiles.urls import staticfiles_urlpatterns
-from django.conf import settings
-from django.urls import path, include
-from django.conf.urls.static import static
-from django.urls import path
+from django.urls import include, path
+
 from core.api.views import (
-    CurrentResultsAPIView,
-    DeviceRegisterView,
-    DeviceHeartbeatAPIView,
-    DeviceStatusAPIView,
-    DeviceTelemetryAPIView,
     AnimalitosResultsAPIView,
+    CruzDailyContentAPIView,
+    CurrentResultsAPIView,
+    DeviceHeartbeatAPIView,
+    DeviceTelemetryAPIView,
+    DeviceRegisterView,
+    DeviceStatusAPIView,
 )
-from django.contrib import admin
 
 admin.site.site_header = "Admin SSGanador"
 admin.site.site_title = "SSGanador Admin"
@@ -20,18 +20,18 @@ admin.site.index_title = "Panel de control"
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path('', include('django_prometheus.urls')),
+    path("", include("django_prometheus.urls")),
 
     path("api/results/", CurrentResultsAPIView.as_view()),
     path("api/animalitos/", AnimalitosResultsAPIView.as_view()),
+    path("api/cruz-diaria/", CruzDailyContentAPIView.as_view()),
 
     path("api/devices/register/", DeviceRegisterView.as_view()),
     path("api/devices/heartbeat/", DeviceHeartbeatAPIView.as_view()),
     path("api/devices/telemetry/", DeviceTelemetryAPIView.as_view()),
-    path("api/devices/status/", DeviceStatusAPIView.as_view(), name="device-status"),  
+    path("api/devices/status/", DeviceStatusAPIView.as_view(), name="device-status"),
 ]
 
 if settings.DEBUG:
-        urlpatterns += staticfiles_urlpatterns()
-        
-        urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    urlpatterns += staticfiles_urlpatterns()
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

@@ -1,0 +1,67 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+  <div id="content-main">
+    <div class="module">
+      <h2>Resumen general</h2>
+      <p>Generado: {{ generated_at|date:"Y-m-d H:i:s T" }}</p>
+      <p>Tarifa semanal por pantalla: USD {{ weekly_rate }}</p>
+      <p>Clientes activos: {{ summary.client_count }}</p>
+      <p>Sucursales activas: {{ summary.branch_count }}</p>
+      <p>Pantallas activas: {{ summary.device_count }}</p>
+      <p>Total semanal estimado: USD {{ summary.weekly_total_usd }}</p>
+    </div>
+
+    {% if report_rows %}
+      {% for row in report_rows %}
+        <div class="module aligned">
+          <h2>{{ row.client_name }}</h2>
+          <p>Sucursales: {{ row.branch_count }} | Pantallas: {{ row.device_count }} | Total semanal: USD {{ row.weekly_total_usd }}</p>
+          {% for membership_group in row.membership_groups %}
+            <div class="module">
+              <h3>
+                Grupo de membresia:
+                {% if membership_group.membership_started_at %}{{ membership_group.membership_started_at|date:"Y-m-d" }}{% else %}-{% endif %}
+                a
+                {% if membership_group.membership_ends_at %}{{ membership_group.membership_ends_at|date:"Y-m-d" }}{% else %}-{% endif %}
+              </h3>
+              <p>Sucursales: {{ membership_group.branch_count }} | Pantallas: {{ membership_group.device_count }} | Total grupo: USD {{ membership_group.weekly_total_usd }}</p>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Sucursal</th>
+                    <th>Inicio membresia</th>
+                    <th>Fin membresia</th>
+                    <th>COD</th>
+                    <th>Device ID</th>
+                    <th>Ultimo heartbeat</th>
+                    <th>Ultimo seen</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for branch in membership_group.branches %}
+                    {% for device in branch.devices %}
+                      <tr>
+                        <td>{{ branch.branch_name }}</td>
+                        <td>{% if membership_group.membership_started_at %}{{ membership_group.membership_started_at|date:"Y-m-d" }}{% else %}-{% endif %}</td>
+                        <td>{% if membership_group.membership_ends_at %}{{ membership_group.membership_ends_at|date:"Y-m-d" }}{% else %}-{% endif %}</td>
+                        <td>{{ device.activation_code }}</td>
+                        <td>{{ device.device_id }}</td>
+                        <td>{% if device.last_heartbeat_at %}{{ device.last_heartbeat_at|date:"Y-m-d H:i:s" }}{% else %}-{% endif %}</td>
+                        <td>{% if device.last_seen %}{{ device.last_seen|date:"Y-m-d H:i:s" }}{% else %}-{% endif %}</td>
+                      </tr>
+                    {% endfor %}
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% endfor %}
+        </div>
+      {% endfor %}
+    {% else %}
+      <div class="module">
+        <p>No hay pantallas activas con sucursal operativa para el calculo semanal.</p>
+      </div>
+    {% endif %}
+  </div>
+{% endblock %}

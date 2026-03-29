@@ -10,6 +10,11 @@ from celery.schedules import crontab
 
 from config.env import BASE_DIR, load_project_env
 
+
+def _split_env_list(name: str, default: str = "") -> list[str]:
+    raw = os.getenv(name, default)
+    return [value.strip() for value in raw.split(",") if value.strip()]
+
 USE_X_FORWARDED_HOST = True
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
@@ -20,7 +25,7 @@ load_project_env()
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-insecure-key")
 DEBUG = os.getenv("DJANGO_DEBUG", "1") == "1"
 
-ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",") if not DEBUG else ["*"]
+ALLOWED_HOSTS = _split_env_list("DJANGO_ALLOWED_HOSTS") if not DEBUG else ["*"]
 
 TIME_ZONE = os.getenv("DJANGO_TIME_ZONE", "America/Caracas")
 USE_TZ = True
@@ -74,6 +79,9 @@ SCRAPER_RESULT_MANUAL_ORIGIN_LABEL = (
     os.getenv("SCRAPER_RESULT_MANUAL_ORIGIN_LABEL", "manual_contingency").strip()
     or "manual_contingency"
 )
+SCRAPER_BOOTSTRAP_MAX_AGE_MINUTES = int(os.getenv("SCRAPER_BOOTSTRAP_MAX_AGE_MINUTES", "90"))
+SCRAPER_EXECUTION_RETENTION_DAYS = int(os.getenv("SCRAPER_EXECUTION_RETENTION_DAYS", "14"))
+WEEKLY_DEVICE_RATE_USD = os.getenv("WEEKLY_DEVICE_RATE_USD", "3").strip() or "3"
 ADMIN_ACTIVITY_TELEGRAM_ENABLED = os.getenv("ADMIN_ACTIVITY_TELEGRAM_ENABLED", "0") == "1"
 
 MEDIA_URL = "/media/"
@@ -148,11 +156,16 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
 }
 
-CORS_ALLOW_ALL_ORIGINS = True
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://localhost:3000",
-]
+CORS_ALLOWED_ORIGINS = _split_env_list(
+    "CORS_ALLOWED_ORIGINS",
+    default="http://localhost:3000,http://localhost:5173,http://localhost:8080,http://127.0.0.1:8080",
+)
+CORS_ALLOW_ALL_ORIGINS = not bool(CORS_ALLOWED_ORIGINS)
+
+CSRF_TRUSTED_ORIGINS = _split_env_list(
+    "CSRF_TRUSTED_ORIGINS",
+    default="http://localhost:8000,http://127.0.0.1:8000,http://localhost:8080,http://127.0.0.1:8080",
+)
 
 ASGI_APPLICATION = "config.asgi.application"
 
@@ -203,5 +216,13 @@ CELERY_BEAT_SCHEDULE = {
     "notify_scraper_alerts": {
         "task": "core.tasks.notify_scraper_alerts",
         "schedule": crontab(minute="*/15"),
+    },
+    "scrape_cruz_daily_content": {
+        "task": "core.tasks.scrape_cruz_daily_content",
+        "schedule": crontab(minute=0, hour=9),
+    },
+    "purge_scraper_executions": {
+        "task": "core.tasks.purge_scraper_executions",
+        "schedule": crontab(minute=20, hour=3),
     },
 }

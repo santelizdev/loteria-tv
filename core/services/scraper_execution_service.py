@@ -491,7 +491,7 @@ class ScraperExecutionService:
         queryset = cls._get_result_queryset(scraper_key, draw_date)
         groups = []
         for row in queryset:
-            if row["result_origin"] != "automatic_valid":
+            if not cls._is_usable_result_origin(row["result_origin"]):
                 continue
             draw_time_str = row["draw_time"].strftime("%H:%M") if row["draw_time"] else ""
             groups.append(
@@ -629,6 +629,15 @@ class ScraperExecutionService:
         if scope == "provider":
             return "missing_provider_rows"
         return "missing_scraper_rows"
+
+    @staticmethod
+    def _is_usable_result_origin(result_origin: str) -> bool:
+        return result_origin in {
+            CurrentResult.ResultOrigin.AUTOMATIC_VALID,
+            CurrentResult.ResultOrigin.MANUAL_CONTINGENCY,
+            AnimalitoResult.ResultOrigin.AUTOMATIC_VALID,
+            AnimalitoResult.ResultOrigin.MANUAL_CONTINGENCY,
+        }
 
     @classmethod
     def _build_fingerprint(

@@ -9,6 +9,7 @@
 var ROTATION_MS            = 40000;
 var ANIMALITOS_REFRESH_MS  = 60000;
 var ANIMALITOS_INTERVAL_MS = 40000;
+var CRUZ_DAILY_REFRESH_MS  = 10 * 60 * 1000;
 var NETWORK_TIMEOUT_MS     = 15000;
 var CACHE_PREFIX           = "loteriatv-cache-" + getAppVersion() + ":";
 
@@ -25,6 +26,7 @@ var deviceManager = new DeviceManager(
 );
 
 var gridEl     = document.getElementById("grid");
+var dailySidebarEl = document.getElementById("dailySidebar");
 var titleEl    = document.getElementById("resultsTitle");
 var clockEl    = document.getElementById("vzClock");
 var progressEl = document.getElementById("progressBar");
@@ -115,6 +117,12 @@ function chunk(arr, size) {
   return out;
 }
 
+function formatDateLabel(dateISO) {
+  var parts = String(dateISO || "").split("-");
+  if (parts.length !== 3) return "";
+  return parts[2] + "/" + parts[1] + "/" + parts[0];
+}
+
 function setProgress(startTs, durationMs) {
   if (!progressEl) return;
   var pct = Math.min(100, ((Date.now() - startTs) / durationMs) * 100);
@@ -175,6 +183,9 @@ var state = {
   animalitosDay: "today",
   animalitosGroupIndex: 0,
 
+  cruzDailyCards: [],
+  cruzDailyDate: "",
+
   pageIndex: 0,
 };
 
@@ -183,7 +194,8 @@ var rafTimer      = null;
 var tickStart     = 0;
 var inflightRefresh = {
   triples: null,
-  animalitos: null
+  animalitos: null,
+  cruzDaily: null
 };
 
 function storageSet(key, value) {
@@ -299,6 +311,30 @@ function normalizeAnimalitos(raw) {
       provider_logo_url: String(
         r.provider_logo_url !== null && r.provider_logo_url !== undefined ? r.provider_logo_url : ""
       ).trim(),
+    });
+  }
+  return out;
+}
+
+function normalizeCruzDailyContent(raw) {
+  var out = [];
+  var list = raw || [];
+  for (var i = 0; i < list.length; i++) {
+    var item = list[i] || {};
+    var imageUrl = String(
+      item.image_url !== null && item.image_url !== undefined ? item.image_url : ""
+    ).trim();
+    if (!imageUrl) continue;
+    out.push({
+      draw_date: String(
+        item.draw_date !== null && item.draw_date !== undefined ? item.draw_date : ""
+      ).trim(),
+      type: String(item.type !== null && item.type !== undefined ? item.type : "").trim(),
+      title: String(item.title !== null && item.title !== undefined ? item.title : "").trim(),
+      image_url: imageUrl,
+      image_alt: String(
+        item.image_alt !== null && item.image_alt !== undefined ? item.image_alt : ""
+      ).trim()
     });
   }
   return out;
@@ -770,9 +806,44 @@ function renderAnimalitosGroup(day) {
   gridEl.innerHTML = html;
 }
 
+function renderDailySidebar() {
+  if (!dailySidebarEl) return;
+
+  var cards = state.cruzDailyCards || [];
+  var title = "CRUZ DE LA SUERTE";
+  if (state.cruzDailyDate) {
+    title += " " + esc(formatDateLabel(state.cruzDailyDate));
+  }
+
+  var html =
+    '<h2 class="daily-sidebar__title">' + title + '</h2>';
+
+  if (!cards.length) {
+    dailySidebarEl.innerHTML =
+      html +
+      '<div class="daily-sidebar__empty">Pendiente por publicar la cruz diaria.</div>';
+    return;
+  }
+
+  for (var i = 0; i < cards.length; i++) {
+    var card = cards[i];
+    html +=
+      '<article class="daily-card">' +
+        '<div class="daily-card__frame">' +
+          '<img class="daily-card__image" src="' + esc(card.image_url) + '" alt="' +
+            esc(card.image_alt || card.title || "") +
+            '" loading="lazy" decoding="async" />' +
+        '</div>' +
+      '</article>';
+  }
+
+  dailySidebarEl.innerHTML = html;
+}
+
 function render() {
   if (state.mode === "triples") renderTriplesPage();
   else renderAnimalitosGroup(state.animalitosDay);
+  renderDailySidebar();
 }
 
 function reportTelemetry(eventType, options) {
@@ -815,7 +886,7 @@ function refreshStatusContext() {
 function getApiBase() {
   return (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE)
     ? window.__APP_CONFIG__.API_BASE
-    : "https://api.ssganador.lat";
+    : window.location.origin;
 }
 
 var BUSINESS_TZ = "America/Caracas";
@@ -928,6 +999,57 @@ function refreshAnimalitosCaches() {
   });
 
   return inflightRefresh.animalitos;
+}
+
+function fetchCruzDailyContent() {
+  var code = deviceManager.activationCode
+    || localStorage.getItem("activation_code")
+    || "DEV";
+  var url = getApiBase() + "/api/cruz-diaria/?code=" + encodeURIComponent(code);
+  return fetchWithTimeout(url, { cache: "no-store" }, NETWORK_TIMEOUT_MS)
+    .then(function (res) {
+      if (!res.ok) return [];
+      return res.json().then(function (data) {
+        return Array.isArray(data) ? normalizeCruzDailyContent(data) : [];
+      });
+    })
+    .catch(function () { return []; });
+}
+
+function refreshCruzDailyCache() {
+  if (inflightRefresh.cruzDaily) return inflightRefresh.cruzDaily;
+
+  inflightRefresh.cruzDaily = fetchCruzDailyContent().then(function (cards) {
+    var cachedCards;
+    if (cards && cards.length) {
+      state.cruzDailyCards = cards;
+      state.cruzDailyDate = String(cards[0].draw_date || "");
+      saveDatasetCache("cruz:daily", state.cruzDailyCards);
+      return cards;
+    }
+
+    cachedCards = normalizeCruzDailyContent(readDatasetCache("cruz:daily"));
+    state.cruzDailyCards = cachedCards;
+    state.cruzDailyDate = cachedCards.length
+      ? String(cachedCards[0].draw_date || "")
+      : "";
+    return cachedCards;
+  }).catch(function () {
+    state.cruzDailyCards = normalizeCruzDailyContent(readDatasetCache("cruz:daily"));
+    state.cruzDailyDate = state.cruzDailyCards.length
+      ? String(state.cruzDailyCards[0].draw_date || "")
+      : "";
+    return state.cruzDailyCards;
+  }).then(function (cards) {
+    inflightRefresh.cruzDaily = null;
+    renderDailySidebar();
+    return cards;
+  }, function (error) {
+    inflightRefresh.cruzDaily = null;
+    throw error;
+  });
+
+  return inflightRefresh.cruzDaily;
 }
 
 // ---------- ROTATION ----------
@@ -1066,10 +1188,14 @@ window.addEventListener("resultsUpdated", function (e) {
     .then(function () {
       setInterval(refreshStatusContext, 5 * 60 * 1000);
       setInterval(refreshTriplesCaches, ANIMALITOS_REFRESH_MS);
-      return refreshAnimalitosCaches();
+      return Promise.all([
+        refreshAnimalitosCaches(),
+        refreshCruzDailyCache()
+      ]);
     })
     .then(function () {
       setInterval(refreshAnimalitosCaches, ANIMALITOS_REFRESH_MS);
+      setInterval(refreshCruzDailyCache, CRUZ_DAILY_REFRESH_MS);
       render();
       startRotation(ROTATION_MS);
       reportTelemetry("LOAD_SUCCESS", {
@@ -1078,6 +1204,7 @@ window.addEventListener("resultsUpdated", function (e) {
           boot_stage: "initial_render_complete",
           triples_today_count: state.triplesTodayRows.length,
           animalitos_today_count: state.animalitosTodayRows.length,
+          cruz_daily_count: state.cruzDailyCards.length,
         },
       });
     })
