@@ -15,6 +15,10 @@ def _split_env_list(name: str, default: str = "") -> list[str]:
     raw = os.getenv(name, default)
     return [value.strip() for value in raw.split(",") if value.strip()]
 
+
+def _env_bool(name: str, default: str = "0") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
 USE_X_FORWARDED_HOST = True
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
@@ -166,6 +170,8 @@ CSRF_TRUSTED_ORIGINS = _split_env_list(
     "CSRF_TRUSTED_ORIGINS",
     default="http://localhost:8000,http://127.0.0.1:8000,http://localhost:8080,http://127.0.0.1:8080",
 )
+CSRF_COOKIE_SECURE = _env_bool("CSRF_COOKIE_SECURE", "1" if not DEBUG else "0")
+SESSION_COOKIE_SECURE = _env_bool("SESSION_COOKIE_SECURE", "1" if not DEBUG else "0")
 
 ASGI_APPLICATION = "config.asgi.application"
 
