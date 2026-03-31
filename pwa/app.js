@@ -11,6 +11,7 @@ var ANIMALITOS_REFRESH_MS  = 60000;
 var ANIMALITOS_INTERVAL_MS = 40000;
 var CRUZ_DAILY_REFRESH_MS  = 10 * 60 * 1000;
 var NETWORK_TIMEOUT_MS     = 15000;
+var GROUPED_SLOT_TOLERANCE_MINUTES = 15;
 var CACHE_PREFIX           = "loteriatv-cache-" + getAppVersion() + ":";
 
 var SLOTS = (function () {
@@ -340,25 +341,31 @@ function normalizeCruzDailyContent(raw) {
   return out;
 }
 
-var PROVIDER_ORDER = {
-  "Triple Chance A": 0,
-  "Triple Chance B": 1,
-  "Triple Chance C": 2,
-  "Triple Caracas A": 3,
-  "Triple Caracas B": 4,
-  "Triple Caracas C": 5,
-  "Triple Tachira A": 6,
-  "Triple Tachira B": 7,
-  "Triple Tachira C": 8,
-  "Triple Zulia A": 9,
-  "Triple Zulia B": 10,
-  "Triple Zulia C": 11,
-  "Triple Caliente A": 12,
-  "Triple Caliente B": 13,
-  "Triple Caliente C": 14,
-  "Triple Zamorano A": 15,
-  "Triple Zamorano B": 16,
-  "Triple Zamorano C": 17
+var ANIMALITOS_PROVIDER_ORDER = {
+  "Guacharito": 0,
+  "Guacharo": 1,
+  "Cazaloton": 2,
+  "La Granjita": 3,
+  "Loto Chaima": 4,
+  "Lotto Activo": 5,
+  "Lotto Activo Interl": 6,
+  "Lotto Rey": 7,
+  "Mega Animal": 8,
+  "SelvaPlus": 9
+};
+
+var TRIPLE_CARD_ORDER = {
+  "Triple Caliente": 0,
+  "Triple Caracas": 1,
+  "Chance Astral": 2,
+  "Triple Tachira": 3,
+  "Trio Activo": 4,
+  "Triple Facil": 5,
+  "Triple Zamorano": 6,
+  "Triple Zulia": 7,
+  "Triple Gana": 8,
+  "Super Gana": 9,
+  "Triple Centena": 10
 };
 
 function computeProviders(rows) {
@@ -369,8 +376,8 @@ function computeProviders(rows) {
     if (p && !seen[p]) { seen[p] = true; out.push(p); }
   }
   return out.sort(function (a, b) {
-    var ra = PROVIDER_ORDER[a];
-    var rb = PROVIDER_ORDER[b];
+    var ra = ANIMALITOS_PROVIDER_ORDER[a];
+    var rb = ANIMALITOS_PROVIDER_ORDER[b];
     var ha = typeof ra === "number";
     var hb = typeof rb === "number";
     if (ha && hb) return ra - rb;
@@ -429,6 +436,21 @@ function mapToGroupedSlot(provider, slot) {
   for (var i = 0; i < slots.length; i++) {
     if (slots[i] === src) return slots[i];
   }
+  var srcMinutes = _timeToMinutes(src);
+  if (srcMinutes < 0) return "";
+  var nearestSlot = "";
+  var nearestDelta = null;
+  for (i = 0; i < slots.length; i++) {
+    var slotMinutes = _timeToMinutes(slots[i]);
+    if (slotMinutes < 0) continue;
+    var delta = Math.abs(slotMinutes - srcMinutes);
+    if (delta > GROUPED_SLOT_TOLERANCE_MINUTES) continue;
+    if (nearestDelta === null || delta < nearestDelta) {
+      nearestDelta = delta;
+      nearestSlot = slots[i];
+    }
+  }
+  if (nearestSlot) return nearestSlot;
   return "";
 }
 
@@ -439,8 +461,7 @@ function buildTripleCards(todayRows, yesterdayRows) {
   var i;
 
   function isGroupedBase(base) {
-    return base === "Triple Chance" ||
-      base === "Triple Caracas" ||
+    return base === "Triple Caracas" ||
       base === "Triple Tachira" ||
       base === "Triple Zulia" ||
       base === "Triple Caliente" ||
@@ -460,8 +481,7 @@ function buildTripleCards(todayRows, yesterdayRows) {
   }
 
   function isLegacyGroupedProvider(name) {
-    return name === "Triple Chance" ||
-      name === "Triple Caracas" ||
+    return name === "Triple Caracas" ||
       name === "Triple Tachira" ||
       name === "Triple Zulia" ||
       name === "Triple Caliente" ||
@@ -496,7 +516,7 @@ function buildTripleCards(todayRows, yesterdayRows) {
   }
 
   var cards = [];
-  var basesPriority = ["Triple Chance", "Triple Caracas", "Triple Tachira", "Triple Zulia", "Triple Caliente", "Triple Zamorano"];
+  var basesPriority = ["Triple Caliente", "Triple Caracas", "Triple Tachira", "Triple Zamorano", "Triple Zulia"];
   for (i = 0; i < basesPriority.length; i++) {
     var bp = basesPriority[i];
     if (!grouped[bp]) {
@@ -569,7 +589,16 @@ function buildTripleCards(todayRows, yesterdayRows) {
     cards.push({ kind: "single", provider: sp, rows: rowsDual });
   }
 
-  return cards;
+  return cards.sort(function (a, b) {
+    var ra = TRIPLE_CARD_ORDER[a.provider];
+    var rb = TRIPLE_CARD_ORDER[b.provider];
+    var ha = typeof ra === "number";
+    var hb = typeof rb === "number";
+    if (ha && hb) return ra - rb;
+    if (ha && !hb) return -1;
+    if (!ha && hb) return 1;
+    return String(a.provider || "").localeCompare(String(b.provider || ""));
+  });
 }
 
 function applyTheme(theme) {

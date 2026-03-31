@@ -58,24 +58,24 @@ class ProviderSpec:
 
 PROVIDERS: tuple[ProviderSpec, ...] = (
     ProviderSpec(name="Trio Activo", kind="table_simple", dom_id="trioactivo"),
-    ProviderSpec(name="La Ricachona", kind="table_simple", dom_id="laricachona"),
     ProviderSpec(name="Triple Centena", kind="table_simple", dom_id="triplecentena"),
-    ProviderSpec(name="Triple Dorado", kind="table_simple", dom_id="tripledorado"),
     ProviderSpec(name="Triple Facil", kind="table_simple", dom_id="triplefacil"),
-    ProviderSpec(name="Terminal Trio", kind="table_simple", dom_id="terminaltrio"),
-    ProviderSpec(name="Terminal La Granjita", kind="table_simple", dom_id="terminallagranjita"),
-    ProviderSpec(name="La Ruca", kind="table_simple", dom_id="laruca"),
-    ProviderSpec(
-        name="Triple Chance",
-        kind="triple_chance",
-        dom_id="triplechance",
-        source_url=TRIPLE_CHANCE_URL,
-    ),
     ProviderSpec(name="Triple Zulia", kind="triple_abc", dom_id="triplezulia", source_url=TRIPLE_ZULIA_URL),
     ProviderSpec(name="Triple Caracas", kind="triple_abc", dom_id="triplecaracas", source_url=TRIPLE_CARACAS_URL),
     ProviderSpec(name="Triple Tachira", kind="triple_abc", dom_id="tripletachira", source_url=TRIPLE_TACHIRA_URL),
     ProviderSpec(name="Triple Caliente", kind="triple_abc", dom_id="triplecaliente", source_url=TRIPLE_CALIENTE_URL),
     ProviderSpec(name="Triple Zamorano", kind="triple_abc", dom_id="triplezamorano", source_url=TRIPLE_ZAMORANO_URL),
+    # ProviderSpec(name="La Ricachona", kind="table_simple", dom_id="laricachona"),
+    # ProviderSpec(name="Triple Dorado", kind="table_simple", dom_id="tripledorado"),
+    # ProviderSpec(name="Terminal Trio", kind="table_simple", dom_id="terminaltrio"),
+    # ProviderSpec(name="Terminal La Granjita", kind="table_simple", dom_id="terminallagranjita"),
+    # ProviderSpec(name="La Ruca", kind="table_simple", dom_id="laruca"),
+    # ProviderSpec(
+    #     name="Triple Chance",
+    #     kind="triple_chance",
+    #     dom_id="triplechance",
+    #     source_url=TRIPLE_CHANCE_URL,
+    # ),
 )
 
 

@@ -115,3 +115,4 @@ Notas:
 
 - Diagnóstico PWA TV: `pwa/TV_VENEZUELA_DIAGNOSTICO.md`
 - Seguridad y QA: `docs/security_qa_checklist.md`
+- Bitácora del sprint de unificación, Cruz diaria y deploy: `docs/sprint_unificacion_docker_y_cruz_daily.md`

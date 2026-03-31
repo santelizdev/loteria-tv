@@ -9,21 +9,21 @@ from django.utils import timezone
 from core.models import AnimalitoResult, CurrentResult, ScraperExecution, ScraperIncident
 from core.services.scraper_ops_contract_service import ScraperOpsContractService
 
+STRICT_EXPECTED_GROUP_GRACE_MINUTES = 12
+STRICT_GROUP_TIME_TOLERANCE_MINUTES = 15
+
 LOTOVEN_TABLE_SIMPLE_PROVIDERS = (
     "Trio Activo",
-    "La Ricachona",
     "Triple Centena",
-    "Triple Dorado",
     "Triple Facil",
-    "Terminal Trio",
-    "Terminal La Granjita",
-    "La Ruca",
+    # "La Ricachona",  # Pausado por alcance comercial actual.
+    # "Triple Dorado",  # Pausado por alcance comercial actual.
+    # "Terminal Trio",  # Pausado por alcance comercial actual.
+    # "Terminal La Granjita",  # Pausado por alcance comercial actual.
+    # "La Ruca",  # Pausado por alcance comercial actual.
 )
 
 LOTOVEN_STRICT_SCHEDULE = {
-    "Triple Chance A": ("13:00", "16:00", "19:00"),
-    "Triple Chance B": ("13:00", "16:00", "19:00"),
-    "Triple Chance C": ("13:00", "16:00", "19:00"),
     "Triple Caracas A": ("13:00", "16:30", "19:10"),
     "Triple Caracas B": ("13:00", "16:30", "19:10"),
     "Triple Caracas C": ("13:00", "16:30", "19:10"),
@@ -35,6 +35,9 @@ LOTOVEN_STRICT_SCHEDULE = {
     "Triple Tachira C": ("13:15", "16:45", "22:00"),
     "Triple Zamorano A": ("10:00", "12:00", "14:00"),
     "Triple Zamorano C": ("10:00", "12:00", "14:00"),
+    # "Triple Chance A": ("13:00", "16:00", "19:00"),  # Pausado por alcance comercial actual.
+    # "Triple Chance B": ("13:00", "16:00", "19:00"),  # Pausado por alcance comercial actual.
+    # "Triple Chance C": ("13:00", "16:00", "19:00"),  # Pausado por alcance comercial actual.
 }
 
 TUAZAR_BASELINE_PROVIDERS = (
@@ -206,7 +209,11 @@ class ScraperExecutionService:
         for provider_name, time_values in cls._get_strict_schedule(scraper_key).items():
             for time_str in time_values:
                 draw_time = cls._parse_time(time_str)
-                if draw_time <= current_time:
+                draw_time_with_grace = cls._add_minutes_to_time(
+                    draw_time,
+                    cls._get_strict_group_grace_minutes(scraper_key),
+                )
+                if draw_time_with_grace <= current_time:
                     groups.append(
                         {
                             "provider_name": provider_name,
@@ -479,11 +486,16 @@ class ScraperExecutionService:
             (group["scope"], group["provider_name"], group["draw_time"])
             for group in persisted_groups
         }
+        matched_group_keys: set[tuple[str, str, str]] = set()
         missing = []
         for group in expected_groups:
             key = (group["scope"], group["provider_name"], group["draw_time"])
             if key not in persisted_group_keys:
+                if cls._matches_nearby_group_time(group, persisted_groups, matched_group_keys):
+                    continue
                 missing.append(group)
+            else:
+                matched_group_keys.add(key)
         return missing
 
     @classmethod
@@ -621,6 +633,85 @@ class ScraperExecutionService:
     @staticmethod
     def _parse_time(value: str):
         return datetime.strptime(value, "%H:%M").time()
+
+    @staticmethod
+    def _time_to_minutes(value) -> int:
+        return (value.hour * 60) + value.minute
+
+    @classmethod
+    def _add_minutes_to_time(cls, value, minutes: int):
+        total_minutes = cls._time_to_minutes(value) + max(0, int(minutes))
+        total_minutes = min(total_minutes, (23 * 60) + 59)
+        hour = total_minutes // 60
+        minute = total_minutes % 60
+        return datetime.strptime(f"{hour:02d}:{minute:02d}", "%H:%M").time()
+
+    @classmethod
+    def _get_strict_group_grace_minutes(cls, scraper_key: str) -> int:
+        if scraper_key == "lotoven_triples":
+            return STRICT_EXPECTED_GROUP_GRACE_MINUTES
+        return 0
+
+    @classmethod
+    def _get_strict_group_time_tolerance_minutes(cls, scraper_key: str) -> int:
+        if scraper_key == "lotoven_triples":
+            return STRICT_GROUP_TIME_TOLERANCE_MINUTES
+        return 0
+
+    @classmethod
+    def _matches_nearby_group_time(
+        cls,
+        expected_group: dict,
+        persisted_groups: list[dict],
+        matched_group_keys: set[tuple[str, str, str]],
+    ) -> bool:
+        if expected_group.get("scope") != "group":
+            return False
+
+        provider_name = expected_group.get("provider_name") or ""
+        draw_time_str = expected_group.get("draw_time") or ""
+        if not provider_name or not draw_time_str:
+            return False
+
+        tolerance = cls._get_strict_group_time_tolerance_minutes(
+            cls._guess_scraper_key_from_provider(provider_name)
+        )
+        if tolerance <= 0:
+            return False
+
+        expected_minutes = cls._time_to_minutes(cls._parse_time(draw_time_str))
+        nearest_key = None
+        nearest_delta = None
+
+        for group in persisted_groups:
+            if group.get("scope") != "group":
+                continue
+            if group.get("provider_name") != provider_name:
+                continue
+            candidate_time_str = group.get("draw_time") or ""
+            if not candidate_time_str:
+                continue
+            candidate_key = ("group", provider_name, candidate_time_str)
+            if candidate_key in matched_group_keys:
+                continue
+
+            candidate_minutes = cls._time_to_minutes(cls._parse_time(candidate_time_str))
+            delta = abs(candidate_minutes - expected_minutes)
+            if delta > tolerance:
+                continue
+            if nearest_delta is None or delta < nearest_delta:
+                nearest_delta = delta
+                nearest_key = candidate_key
+
+        if nearest_key is None:
+            return False
+
+        matched_group_keys.add(nearest_key)
+        return True
+
+    @staticmethod
+    def _guess_scraper_key_from_provider(provider_name: str) -> str:
+        return "lotoven_triples" if provider_name.startswith("Triple ") else ""
 
     @staticmethod
     def _scope_reason_code(scope: str) -> str:

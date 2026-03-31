@@ -35,6 +35,7 @@ from django.utils import timezone
 
 from core.models import Provider
 from core.models.animalito_result import AnimalitoResult
+from core.services.provider_catalog_service import is_visible_animalito_provider
 from core.services.device_redis_service import DeviceRedisService
 
 
@@ -155,6 +156,7 @@ class Command(BaseCommand):
 
         html = self._fetch_html(target_date=target_date, force=force)
         rows = self._parse_html(html, target_date=target_date, verbosity=verbosity)
+        rows = [row for row in rows if is_visible_animalito_provider(row.get("provider_name") or "")]
 
         if dry_run:
             self.stdout.write(self.style.SUCCESS(f"DRY RUN: {len(rows)} resultados detectados."))

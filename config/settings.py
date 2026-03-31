@@ -199,22 +199,22 @@ CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/2")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://127.0.0.1:6379/3")
 
 CELERY_BEAT_SCHEDULE = {
-    "scrape_triples_hourly": {
+    "scrape_triples_every_3_minutes": {
         "task": "core.tasks.scrape_triples",
-        "schedule": crontab(minute=2, hour="8-22"),
+        "schedule": crontab(minute="*/3", hour="8-22"),
     },
-    "scrape_tuazar_triples_hourly": {
+    "scrape_tuazar_triples_every_3_minutes": {
         "task": "core.tasks.scrape_tuazar_triples",
-        "schedule": crontab(minute=4, hour="8-22"),
+        "schedule": crontab(minute="1-59/3", hour="8-22"),
     },
-    "scrape_animalitos_hourly": {
+    "scrape_animalitos_every_3_minutes": {
         "task": "core.tasks.scrape_animalitos",
-        "schedule": crontab(minute=5, hour="8-22"),
+        "schedule": crontab(minute="2-59/3", hour="8-22"),
     },
-    "scrape_condor_animalitos_hourly": {
-        "task": "core.tasks.scrape_condor_animalitos",
-        "schedule": crontab(minute=7, hour="8-22"),
-    },
+    # "scrape_condor_animalitos_every_3_minutes": {
+    #     "task": "core.tasks.scrape_condor_animalitos",
+    #     "schedule": crontab(minute="*/3", hour="8-22"),
+    # },
     "archive_daily": {
         "task": "core.tasks.archive_daily",
         "schedule": crontab(minute=10, hour=0),
@@ -225,7 +225,7 @@ CELERY_BEAT_SCHEDULE = {
     },
     "scrape_cruz_daily_content": {
         "task": "core.tasks.scrape_cruz_daily_content",
-        "schedule": crontab(minute=0, hour=9),
+        "schedule": crontab(minute=0, hour=8),
     },
     "purge_scraper_executions": {
         "task": "core.tasks.purge_scraper_executions",

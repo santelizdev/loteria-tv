@@ -8,6 +8,7 @@ from django.core.management import call_command
 from django.utils import timezone
 
 from core.models import ScraperHealth
+from core.services.provider_catalog_service import ACTIVE_SCRAPER_KEYS
 from core.services.scraper_execution_service import ScraperExecutionService
 
 
@@ -19,6 +20,7 @@ class ScraperDefinition:
     stale_after_minutes: int = 150
     starts_hour: int = 8
     ends_hour: int = 22
+    min_consecutive_failures_for_health_alert: int = 1
 
 
 class ScraperHealthService:
@@ -32,6 +34,7 @@ class ScraperHealthService:
             key="tuazar_triples",
             label="Triples TuAzar",
             command_name="scrape_tuazar_tables",
+            min_consecutive_failures_for_health_alert=3,
         ),
         "lotoven_animalitos": ScraperDefinition(
             key="lotoven_animalitos",
@@ -44,6 +47,13 @@ class ScraperHealthService:
             command_name="scrape_condor_animalitos",
         ),
     }
+
+    @classmethod
+    def iter_active_definitions(cls):
+        for scraper_key, definition in cls.REGISTRY.items():
+            if scraper_key not in ACTIVE_SCRAPER_KEYS:
+                continue
+            yield scraper_key, definition
 
     @classmethod
     def get_definition(cls, scraper_key: str) -> ScraperDefinition:
@@ -191,7 +201,7 @@ class ScraperHealthService:
     def get_active_alerts(cls, *, now=None) -> list[dict]:
         current_dt = now or timezone.now()
         alerts = []
-        for definition in cls.REGISTRY.values():
+        for _, definition in cls.iter_active_definitions():
             monitor = cls.get_or_create_monitor(definition.key)
             alert = cls._build_alert_payload(definition, monitor, current_dt=current_dt)
             if alert:
@@ -210,7 +220,7 @@ class ScraperHealthService:
         current_dt = now or timezone.now()
         monitors = list(queryset) if queryset is not None else [
             cls.get_or_create_monitor(definition.key)
-            for definition in cls.REGISTRY.values()
+            for _, definition in cls.iter_active_definitions()
         ]
 
         summary = {
@@ -267,6 +277,8 @@ class ScraperHealthService:
         severity = "warning"
         message = ""
         if monitor.last_status == ScraperHealth.Status.FAILED and last_started_date == current_date:
+            if monitor.consecutive_failures < max(1, definition.min_consecutive_failures_for_health_alert):
+                return None
             alert_kind = "failed_today"
             severity = "critical"
             message = monitor.last_error_message or "La ultima corrida fallo."

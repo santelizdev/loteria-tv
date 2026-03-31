@@ -28,7 +28,7 @@ class Command(BaseCommand):
         current_date = local_now.date()
         max_age = timedelta(minutes=max(1, int(options["max_age_minutes"])))
 
-        for scraper_key, definition in ScraperHealthService.REGISTRY.items():
+        for scraper_key, definition in ScraperHealthService.iter_active_definitions():
             if not (definition.starts_hour <= local_now.hour <= definition.ends_hour):
                 self.stdout.write(f"SKIP {scraper_key}: fuera de ventana operativa.")
                 continue
@@ -60,8 +60,8 @@ class Command(BaseCommand):
         self._warm_cruz_daily_content(local_now=local_now, current_date=current_date)
 
     def _warm_cruz_daily_content(self, *, local_now, current_date):
-        if local_now.hour < 9:
-            self.stdout.write("SKIP cruz_daily_content: aun no inicia la ventana diaria (09:00 Vzla).")
+        if local_now.hour < 8:
+            self.stdout.write("SKIP cruz_daily_content: aun no inicia la ventana diaria (08:00 Vzla).")
             return
 
         latest_date = CruzDailyContent.objects.order_by("-draw_date").values_list("draw_date", flat=True).first()

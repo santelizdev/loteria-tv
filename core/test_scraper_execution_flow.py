@@ -10,6 +10,8 @@ from core.models import CurrentResult, Provider, ScraperExecution, ScraperHealth
 from core.services.scraper_execution_service import (
     LOTOVEN_STRICT_SCHEDULE,
     LOTOVEN_TABLE_SIMPLE_PROVIDERS,
+    ScraperExecutionService,
+    STRICT_EXPECTED_GROUP_GRACE_MINUTES,
 )
 from core.services.scraper_health_service import ScraperHealthService
 
@@ -86,7 +88,7 @@ class ScraperExecutionFlowTestCase(TestCase):
     @patch("core.services.scraper_health_service.call_command")
     def test_run_registered_detects_missing_strict_group_as_incident(self, mock_call_command, mock_post):
         def create_partial_lotoven(_command_name):
-            self._seed_lotoven_results(missing_group=("Triple Chance A", "16:00"))
+            self._seed_lotoven_results(missing_group=("Triple Caracas A", "16:30"))
             return None
 
         mock_call_command.side_effect = create_partial_lotoven
@@ -105,23 +107,23 @@ class ScraperExecutionFlowTestCase(TestCase):
         self.assertEqual(execution.status, ScraperExecution.Status.INCIDENT)
         self.assertTrue(execution.incident_detected)
         self.assertIn(
-            {"provider_name": "Triple Chance A", "draw_time": "16:00", "scope": "group"},
+            {"provider_name": "Triple Caracas A", "draw_time": "16:30", "scope": "group"},
             execution.missing_groups,
         )
 
         incident = ScraperIncident.objects.get(
             scraper_key="lotoven_triples",
-            provider_name="Triple Chance A",
+            provider_name="Triple Caracas A",
             failure_reason_code="missing_expected_group",
         )
         self.assertEqual(incident.status, ScraperIncident.Status.OPEN)
-        self.assertEqual(incident.draw_time.strftime("%H:%M"), "16:00")
+        self.assertEqual(incident.draw_time.strftime("%H:%M"), "16:30")
         self.assertTrue(incident.alert_sent)
         mock_post.assert_called_once()
 
         monitor = ScraperHealth.objects.get(scraper_key="lotoven_triples")
         self.assertEqual(monitor.last_status, ScraperHealth.Status.FAILED)
-        self.assertIn("Triple Chance A 16:00", monitor.last_error_message)
+        self.assertIn("Triple Caracas A 16:30", monitor.last_error_message)
         self.assertIsNotNone(monitor.last_notified_at)
 
     @patch("core.services.scraper_notification_service.requests.post")
@@ -132,7 +134,7 @@ class ScraperExecutionFlowTestCase(TestCase):
         def create_rows(_command_name):
             run_number["value"] += 1
             if run_number["value"] == 1:
-                self._seed_lotoven_results(missing_group=("Triple Chance A", "16:00"))
+                self._seed_lotoven_results(missing_group=("Triple Caracas A", "16:30"))
             else:
                 self._seed_lotoven_results()
             return None
@@ -156,7 +158,7 @@ class ScraperExecutionFlowTestCase(TestCase):
 
         incident = ScraperIncident.objects.get(
             scraper_key="lotoven_triples",
-            provider_name="Triple Chance A",
+            provider_name="Triple Caracas A",
             failure_reason_code="missing_expected_group",
         )
         self.assertEqual(incident.status, ScraperIncident.Status.RESOLVED)
@@ -165,3 +167,32 @@ class ScraperExecutionFlowTestCase(TestCase):
 
         monitor = ScraperHealth.objects.get(scraper_key="lotoven_triples")
         self.assertEqual(monitor.last_status, ScraperHealth.Status.SUCCESS)
+
+    def test_missing_groups_accepts_nearby_persisted_time_within_tolerance(self):
+        expected_groups = [
+            {"provider_name": "Triple Caracas A", "draw_time": "19:10", "scope": "group"},
+        ]
+        persisted_groups = [
+            {"provider_name": "Triple Caracas A", "draw_time": "19:00", "scope": "group"},
+        ]
+
+        missing = ScraperExecutionService._get_missing_groups(expected_groups, persisted_groups)
+
+        self.assertEqual(missing, [])
+
+    def test_due_expected_groups_waits_for_grace_window(self):
+        now = timezone.make_aware(
+            datetime(2026, 3, 23, 19, 10 + STRICT_EXPECTED_GROUP_GRACE_MINUTES - 1, 0),
+            timezone.get_current_timezone(),
+        )
+
+        groups = ScraperExecutionService._get_due_expected_groups(
+            "lotoven_triples",
+            self.draw_date,
+            now=now,
+        )
+
+        self.assertNotIn(
+            {"provider_name": "Triple Caracas A", "draw_time": "19:10", "scope": "group"},
+            groups,
+        )

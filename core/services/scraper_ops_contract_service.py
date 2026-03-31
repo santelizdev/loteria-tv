@@ -156,7 +156,7 @@ class ScraperOpsContractService:
 
         cls.validate_registry_alignment()
         matrix = []
-        for scraper_key, definition in ScraperHealthService.REGISTRY.items():
+        for scraper_key, definition in ScraperHealthService.iter_active_definitions():
             contract = cls.get_contract(scraper_key)
             matrix.append(
                 {

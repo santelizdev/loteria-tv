@@ -28,6 +28,10 @@ from core.models import (
 from core.services.device_redis_service import DeviceRedisService
 from core.services.device_service import DeviceService
 from core.services.device_telemetry_service import DeviceTelemetryService
+from core.services.provider_catalog_service import (
+    is_visible_animalito_provider,
+    visible_triple_provider_names,
+)
 
 
 # -----------------------------------------------------------------------------
@@ -263,13 +267,21 @@ class CurrentResultsAPIView(APIView):
         if use_archive:
             qs = (
                 ResultArchive.objects.select_related("provider")
-                .filter(draw_date=target_date, provider__is_active=True)
+                .filter(
+                    draw_date=target_date,
+                    provider__is_active=True,
+                    provider__name__in=visible_triple_provider_names(),
+                )
                 .order_by("provider__name", "draw_time")
             )
         else:
             qs = (
                 CurrentResult.objects.select_related("provider")
-                .filter(draw_date=target_date, provider__is_active=True)
+                .filter(
+                    draw_date=target_date,
+                    provider__is_active=True,
+                    provider__name__in=visible_triple_provider_names(),
+                )
                 .order_by("provider__name", "draw_time")
             )
 
@@ -337,17 +349,21 @@ class AnimalitosResultsAPIView(APIView):
         if use_archive:
             qs = (
                 AnimalitoArchive.objects.select_related("provider")
-                .filter(draw_date=target_date)
+                .filter(draw_date=target_date, provider__is_active=True)
                 .order_by("provider__name", "draw_time")
             )
         else:
             qs = (
                 AnimalitoResult.objects.select_related("provider")
-                .filter(draw_date=target_date)
+                .filter(draw_date=target_date, provider__is_active=True)
                 .order_by("provider__name", "draw_time")
             )
 
-        data = [_serialize_animalito_result(r) for r in qs]
+        data = [
+            _serialize_animalito_result(r)
+            for r in qs
+            if is_visible_animalito_provider(getattr(getattr(r, "provider", None), "name", ""))
+        ]
 
         if not bypass_cache and ttl > 0:
             DeviceRedisService.set_cache(cache_key, data, ttl_seconds=ttl)

@@ -15,6 +15,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from core.models import (
+    AnimalitoResult,
     Branch,
     Client,
     CruzDailyContent,
@@ -144,10 +145,34 @@ class DeviceTelemetryAPITestCase(TestCase):
         snapshot = self.device.telemetry_snapshot
         self.assertIsNotNone(snapshot.last_load_success_at)
 
-@override_settings(CACHES=TEST_CACHES, CHANNEL_LAYERS=TEST_CHANNEL_LAYERS)
+@override_settings(
+    CACHES=TEST_CACHES,
+    CHANNEL_LAYERS=TEST_CHANNEL_LAYERS,
+    SCRAPER_TELEGRAM_BOT_TOKEN="",
+    SCRAPER_TELEGRAM_CHAT_IDS=[],
+)
 class ScraperHealthServiceTestCase(TestCase):
     @patch("core.services.scraper_health_service.call_command")
     def test_run_registered_success_marks_monitor(self, mock_call_command):
+        def seed_condor_result(_command_name):
+            provider = Provider.objects.create(
+                name="Condor Gana",
+                source_url="https://www.lottoresultados.com/resultados/animalitos/condor-gana",
+                is_active=True,
+            )
+            AnimalitoResult.objects.create(
+                provider=provider,
+                draw_date=timezone.localdate(),
+                draw_time=datetime.strptime("09:00", "%H:%M").time(),
+                animal_number="62",
+                animal_name="Cachicamo",
+                animal_image_url="https://example.com/condor-62.webp",
+                provider_logo_url="https://example.com/condor-logo.webp",
+            )
+            return None
+
+        mock_call_command.side_effect = seed_condor_result
+
         ScraperHealthService.run_registered("condor_animalitos")
 
         monitor = ScraperHealth.objects.get(scraper_key="condor_animalitos")
@@ -176,12 +201,14 @@ class ScraperHealthServiceTestCase(TestCase):
         monitor.last_started_at = now
         monitor.last_finished_at = now
         monitor.last_error_message = "condor parser failed"
+        monitor.consecutive_failures = 1
         monitor.save(
             update_fields=[
                 "last_status",
                 "last_started_at",
                 "last_finished_at",
                 "last_error_message",
+                "consecutive_failures",
                 "updated_at",
             ]
         )
@@ -208,6 +235,28 @@ class ScraperHealthServiceTestCase(TestCase):
         alert = ScraperHealthService.get_alert("condor_animalitos", now=now)
         self.assertIsNotNone(alert)
         self.assertEqual(alert["alert_kind"], "stale")
+
+    def test_get_alert_respects_min_failures_threshold_for_tuazar(self):
+        now = timezone.now()
+        monitor = ScraperHealthService.get_or_create_monitor("tuazar_triples")
+        monitor.last_status = ScraperHealth.Status.FAILED
+        monitor.last_started_at = now
+        monitor.last_finished_at = now
+        monitor.last_error_message = "Triple Gana no dejo filas utilizables hoy."
+        monitor.consecutive_failures = 2
+        monitor.save(
+            update_fields=[
+                "last_status",
+                "last_started_at",
+                "last_finished_at",
+                "last_error_message",
+                "consecutive_failures",
+                "updated_at",
+            ]
+        )
+
+        alert = ScraperHealthService.get_alert("tuazar_triples", now=now)
+        self.assertIsNone(alert)
 
 
 class ScraperNotificationServiceTestCase(TestCase):
@@ -357,17 +406,17 @@ class WarmScraperDataCommandTestCase(TestCase):
             datetime(2026, 3, 29, 12, 0, 0),
             timezone.get_current_timezone(),
         )
-        definition = ScraperHealthService.get_definition("condor_animalitos")
-        monitor = ScraperHealthService.get_or_create_monitor("condor_animalitos")
+        definition = ScraperHealthService.get_definition("lotoven_animalitos")
+        monitor = ScraperHealthService.get_or_create_monitor("lotoven_animalitos")
         monitor.last_status = ScraperHealth.Status.SUCCESS
         monitor.last_success_at = fixed_now - timedelta(hours=4)
         monitor.save(update_fields=["last_status", "last_success_at", "updated_at"])
 
-        with patch.dict(ScraperHealthService.REGISTRY, {"condor_animalitos": definition}, clear=True):
+        with patch.dict(ScraperHealthService.REGISTRY, {"lotoven_animalitos": definition}, clear=True):
             with patch("core.management.commands.warm_scraper_data.timezone.now", return_value=fixed_now):
                 call_command("warm_scraper_data", max_age_minutes=90)
 
-        mock_run_registered.assert_called_once_with("condor_animalitos")
+        mock_run_registered.assert_called_once_with("lotoven_animalitos")
 
     @patch("core.management.commands.warm_scraper_data.ScraperHealthService.run_registered")
     def test_warm_scraper_data_skips_when_last_success_is_recent(self, mock_run_registered):
@@ -399,6 +448,19 @@ class WarmScraperDataCommandTestCase(TestCase):
                 call_command("warm_scraper_data", max_age_minutes=90)
 
         mock_call_command.assert_called_once_with("scrape_cruz_daily_content")
+
+    @patch("core.management.commands.warm_scraper_data.call_command")
+    def test_warm_scraper_data_skips_cruz_daily_before_eight_am(self, mock_call_command):
+        fixed_now = timezone.make_aware(
+            datetime(2026, 3, 29, 7, 59, 0),
+            timezone.get_current_timezone(),
+        )
+
+        with patch.dict(ScraperHealthService.REGISTRY, {}, clear=True):
+            with patch("core.management.commands.warm_scraper_data.timezone.now", return_value=fixed_now):
+                call_command("warm_scraper_data", max_age_minutes=90)
+
+        mock_call_command.assert_not_called()
 
     @patch("core.management.commands.warm_scraper_data.call_command")
     def test_warm_scraper_data_skips_cruz_daily_when_today_exists(self, mock_call_command):
