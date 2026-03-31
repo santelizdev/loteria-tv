@@ -35,7 +35,10 @@ from django.utils import timezone
 
 from core.models import Provider
 from core.models.animalito_result import AnimalitoResult
-from core.services.provider_catalog_service import is_visible_animalito_provider
+from core.services.provider_catalog_service import (
+    VISIBLE_ANIMALITO_PROVIDERS,
+    is_visible_animalito_provider,
+)
 from core.services.device_redis_service import DeviceRedisService
 
 
@@ -108,6 +111,7 @@ class Command(BaseCommand):
 
     BASE_URL = "https://lotoven.com"
     ANIMALITOS_URL = "https://lotoven.com/animalitos/"
+    LAST_VISIBLE_HOUR = 19
 
     HTML_CACHE_TTL_SECONDS = 10 * 60
     GLOBAL_COOLDOWN_SECONDS = 10 * 60
@@ -286,7 +290,12 @@ class Command(BaseCommand):
                 horario = self._safe_text(card.select_one("span.horario, span.info2.horario"))
                 draw_time_obj = self._parse_time_12h(horario)
 
-                if not provider_name or not draw_time_obj or not animal_name:
+                if (
+                    not provider_name
+                    or not draw_time_obj
+                    or not animal_name
+                    or draw_time_obj.hour > self.LAST_VISIBLE_HOUR
+                ):
                     continue
 
                 rows.append(
@@ -321,7 +330,11 @@ class Command(BaseCommand):
                 horario = self._safe_text(card.select_one("span.horario, span.info2.horario"))
                 draw_time_obj = self._parse_time_12h(horario)
 
-                if not draw_time_obj or not animal_name:
+                if (
+                    not draw_time_obj
+                    or not animal_name
+                    or draw_time_obj.hour > self.LAST_VISIBLE_HOUR
+                ):
                     continue
 
                 rows.append(
@@ -391,6 +404,12 @@ class Command(BaseCommand):
     def _upsert_results(self, rows: list[dict], target_date: date_cls) -> tuple[int, int]:
         created = 0
         updated = 0
+
+        AnimalitoResult.objects.filter(
+            provider__name__in=VISIBLE_ANIMALITO_PROVIDERS,
+            draw_date=target_date,
+            draw_time__hour__gt=self.LAST_VISIBLE_HOUR,
+        ).delete()
 
         for r in rows:
             provider_name = normalize_provider_name(r["provider_name"])

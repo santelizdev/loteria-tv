@@ -12,11 +12,13 @@ var ANIMALITOS_INTERVAL_MS = 40000;
 var CRUZ_DAILY_REFRESH_MS  = 10 * 60 * 1000;
 var NETWORK_TIMEOUT_MS     = 15000;
 var GROUPED_SLOT_TOLERANCE_MINUTES = 15;
+var TRIPLES_GROUP_SIZE     = 4;
+var ANIMALITOS_GROUP_SIZE  = 3;
 var CACHE_PREFIX           = "loteriatv-cache-" + getAppVersion() + ":";
 
 var SLOTS = (function () {
   var out = [];
-  for (var h = 8; h <= 20; h++) {
+  for (var h = 8; h <= 19; h++) {
     out.push((h < 10 ? "0" : "") + h + ":00");
   }
   return out;
@@ -75,12 +77,12 @@ function timeToHourSlot(timeStr) {
     var mer = match12[3].toUpperCase();
     if (mer === "AM" && h12 === 12) h12 = 0;
     if (mer === "PM" && h12 !== 12) h12 += 12;
-    if (h12 < 8 || h12 > 20) return null;
+    if (h12 < 8 || h12 > 19) return null;
     return (h12 < 10 ? "0" : "") + h12 + ":00";
   }
 
   var hh = Number(s.split(":")[0]);
-  if (isNaN(hh) || hh < 8 || hh > 20) return null;
+  if (isNaN(hh) || hh < 8 || hh > 19) return null;
   return (hh < 10 ? "0" : "") + hh + ":00";
 }
 
@@ -363,9 +365,8 @@ var TRIPLE_CARD_ORDER = {
   "Triple Facil": 5,
   "Triple Zamorano": 6,
   "Triple Zulia": 7,
-  "Triple Gana": 8,
-  "Super Gana": 9,
-  "Triple Centena": 10
+  "Triple Centena": 8,
+  "Triple Gana / Super Gana": 9
 };
 
 function computeProviders(rows) {
@@ -515,6 +516,36 @@ function buildTripleCards(todayRows, yesterdayRows) {
     return m;
   }
 
+  function buildSingleRows(providerName) {
+    var todayList = (singleToday[providerName] || []).sort(function (a, b) {
+      return String(a.time).localeCompare(String(b.time));
+    });
+    var ydayList = (singleYesterday[providerName] || []).sort(function (a, b) {
+      return String(a.time).localeCompare(String(b.time));
+    });
+    var tm = rowsByTimeMap(todayList);
+    var ym = rowsByTimeMap(ydayList);
+
+    var timesMap = {};
+    var tt;
+    for (tt in tm) if (tm.hasOwnProperty(tt)) timesMap[tt] = true;
+    for (tt in ym) if (ym.hasOwnProperty(tt)) timesMap[tt] = true;
+    var times = [];
+    for (tt in timesMap) if (timesMap.hasOwnProperty(tt)) times.push(tt);
+    times.sort(function (a, b) { return String(a).localeCompare(String(b)); });
+
+    var rowsDual = [];
+    for (var ti = 0; ti < times.length; ti++) {
+      var t = times[ti];
+      rowsDual.push({
+        time: t,
+        today: tm[t] || "",
+        yesterday: ym[t] || "",
+      });
+    }
+    return rowsDual;
+  }
+
   var cards = [];
   var basesPriority = ["Triple Caliente", "Triple Caracas", "Triple Tachira", "Triple Zamorano", "Triple Zulia"];
   for (i = 0; i < basesPriority.length; i++) {
@@ -559,34 +590,30 @@ function buildTripleCards(todayRows, yesterdayRows) {
   for (k in singleProvidersMap) if (singleProvidersMap.hasOwnProperty(k)) singleProviders.push(k);
   singleProviders.sort(function (a, b) { return a.localeCompare(b); });
 
+  var pairedProviders = {
+    "Triple Gana": true,
+    "Super Gana": true
+  };
+  var pairSections = [];
+
   for (i = 0; i < singleProviders.length; i++) {
     var sp = singleProviders[i];
-    var todayList = (singleToday[sp] || []).sort(function (a, b) {
-      return String(a.time).localeCompare(String(b.time));
-    });
-    var ydayList = (singleYesterday[sp] || []).sort(function (a, b) {
-      return String(a.time).localeCompare(String(b.time));
-    });
-    var tm = rowsByTimeMap(todayList);
-    var ym = rowsByTimeMap(ydayList);
-
-    var timesMap = {};
-    for (var tt in tm) if (tm.hasOwnProperty(tt)) timesMap[tt] = true;
-    for (tt in ym) if (ym.hasOwnProperty(tt)) timesMap[tt] = true;
-    var times = [];
-    for (tt in timesMap) if (timesMap.hasOwnProperty(tt)) times.push(tt);
-    times.sort(function (a, b) { return String(a).localeCompare(String(b)); });
-
-    var rowsDual = [];
-    for (var ti = 0; ti < times.length; ti++) {
-      var t = times[ti];
-      rowsDual.push({
-        time: t,
-        today: tm[t] || "",
-        yesterday: ym[t] || "",
-      });
+    if (pairedProviders[sp]) {
+      pairSections.push({ provider: sp, rows: buildSingleRows(sp) });
+      continue;
     }
-    cards.push({ kind: "single", provider: sp, rows: rowsDual });
+    cards.push({ kind: "single", provider: sp, rows: buildSingleRows(sp) });
+  }
+
+  if (pairSections.length) {
+    pairSections.sort(function (a, b) {
+      return String(a.provider).localeCompare(String(b.provider));
+    });
+    cards.push({
+      kind: "paired",
+      provider: "Triple Gana / Super Gana",
+      sections: pairSections
+    });
   }
 
   return cards.sort(function (a, b) {
@@ -666,15 +693,52 @@ function renderTriplesPage() {
   var cards = buildTripleCards(rowsToday, rowsYesterday);
   state.triplesProviders = [];
   for (var ci = 0; ci < cards.length; ci++) state.triplesProviders.push(cards[ci].provider);
+  gridEl.style.gridTemplateColumns = "repeat(" + TRIPLES_GROUP_SIZE + ", minmax(0, 1fr))";
 
   if (!cards.length) {
     gridEl.innerHTML = '<div style="padding:16px;">Sin resultados.</div>';
     return;
   }
 
-  var groups = chunk(cards, 4);
+  var groups = chunk(cards, TRIPLES_GROUP_SIZE);
   var group  = groups[state.pageIndex] || groups[0];
   if (!group) return;
+
+  function renderDualRows(rows) {
+    var rowsHtml = "";
+    if (!rows.length) {
+      return (
+        '<div class="col__num2-head"><div class="col__num2-head-item">HOY</div><div class="col__num2-head-item">AYER</div></div>' +
+        '<div class="col__row col__row--dual">' +
+          '<div class="col__time">\u2026</div>' +
+          '<div class="col__num2">' +
+            '<div class="col__num2-col"><div class="col__num"><span class="col__empty">\u2026</span></div></div>' +
+            '<div class="col__num2-col"><div class="col__num"><span class="col__empty">\u2026</span></div></div>' +
+          '</div>' +
+        '</div>'
+      );
+    }
+
+    rowsHtml += '<div class="col__num2-head"><div class="col__num2-head-item">HOY</div><div class="col__num2-head-item">AYER</div></div>';
+    for (var si = 0; si < rows.length; si++) {
+      var rr = rows[si];
+      var nToday = rr.today ? esc(rr.today) : '<span class="col__empty">\u2026</span>';
+      var nYday = rr.yesterday ? esc(rr.yesterday) : '<span class="col__empty">\u2026</span>';
+      rowsHtml +=
+        '<div class="col__row col__row--dual">' +
+          '<div class="col__time">' + esc(slotTo12h(rr.time)) + '</div>' +
+          '<div class="col__num2">' +
+            '<div class="col__num2-col">' +
+              '<div class="col__num">' + nToday + '</div>' +
+            '</div>' +
+            '<div class="col__num2-col">' +
+              '<div class="col__num">' + nYday + '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+    }
+    return rowsHtml;
+  }
 
   var html = "";
   for (var gi = 0; gi < group.length; gi++) {
@@ -719,40 +783,25 @@ function renderTriplesPage() {
           '<div class="col__head"><div class="col__title">' + esc(card.provider) + '</div></div>' +
           '<div class="col__body col__body--grouped">' + bodyHtml + '</div>' +
         '</article>';
+    } else if (card.kind === "paired") {
+      var pairHtml = "";
+      for (var pi = 0; pi < card.sections.length; pi++) {
+        var section = card.sections[pi];
+        pairHtml +=
+          '<section class="col__pair-section">' +
+            '<div class="col__pair-title">' + esc(section.provider) + '</div>' +
+            renderDualRows(section.rows || []) +
+          '</section>';
+      }
+
+      html +=
+        '<article class="col col--paired">' +
+          '<div class="col__head"><div class="col__title">' + esc(card.provider) + '</div></div>' +
+          '<div class="col__body col__body--paired">' + pairHtml + '</div>' +
+        '</article>';
     } else {
       var p      = card.provider;
-      var rowsHtml = "";
-
-      if (!card.rows.length) {
-        rowsHtml =
-          '<div class="col__num2-head"><div class="col__num2-head-item">HOY</div><div class="col__num2-head-item">AYER</div></div>' +
-          '<div class="col__row col__row--dual">' +
-            '<div class="col__time">\u2026</div>' +
-            '<div class="col__num2">' +
-              '<div class="col__num2-col"><div class="col__num"><span class="col__empty">\u2026</span></div></div>' +
-              '<div class="col__num2-col"><div class="col__num"><span class="col__empty">\u2026</span></div></div>' +
-            '</div>' +
-          '</div>';
-      } else {
-        rowsHtml += '<div class="col__num2-head"><div class="col__num2-head-item">HOY</div><div class="col__num2-head-item">AYER</div></div>';
-        for (var si = 0; si < card.rows.length; si++) {
-          var rr = card.rows[si];
-          var nToday = rr.today ? esc(rr.today) : '<span class="col__empty">\u2026</span>';
-          var nYday = rr.yesterday ? esc(rr.yesterday) : '<span class="col__empty">\u2026</span>';
-          rowsHtml +=
-            '<div class="col__row col__row--dual">' +
-              '<div class="col__time">' + esc(slotTo12h(rr.time)) + '</div>' +
-              '<div class="col__num2">' +
-                '<div class="col__num2-col">' +
-                  '<div class="col__num">' + nToday + '</div>' +
-                '</div>' +
-                '<div class="col__num2-col">' +
-                  '<div class="col__num">' + nYday + '</div>' +
-                '</div>' +
-              '</div>' +
-            '</div>';
-        }
-      }
+      var rowsHtml = renderDualRows(card.rows || []);
 
       html +=
         '<article class="col">' +
@@ -779,12 +828,13 @@ function renderAnimalitosGroup(day) {
   }
 
   var providers = state.animalitosProviders;
+  gridEl.style.gridTemplateColumns = "repeat(" + ANIMALITOS_GROUP_SIZE + ", minmax(0, 1fr))";
   if (!providers.length) {
     gridEl.innerHTML = '<div style="padding:16px;">Sin animalitos.</div>';
     return;
   }
 
-  var groups = chunk(providers, 4);
+  var groups = chunk(providers, ANIMALITOS_GROUP_SIZE);
   var group  = groups[state.animalitosGroupIndex] || groups[0];
   if (!group) return;
 
@@ -1104,7 +1154,7 @@ function startRotation(durationMs) {
 
     if (state.mode === "triples") {
       var tripleCards = buildTripleCards(state.triplesTodayRows || [], state.triplesYesterdayRows || []);
-      var groups    = chunk(tripleCards, 4);
+    var groups    = chunk(tripleCards, TRIPLES_GROUP_SIZE);
 
       state.pageIndex += 1;
 
@@ -1124,7 +1174,7 @@ function startRotation(durationMs) {
     }
 
     // Modo animalitos
-    var groups2      = chunk(state.animalitosProviders, 4);
+    var groups2      = chunk(state.animalitosProviders, ANIMALITOS_GROUP_SIZE);
     var totalGroups2 = Math.max(1, groups2.length);
 
     if (state.animalitosDay === "today") {

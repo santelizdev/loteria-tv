@@ -51,19 +51,31 @@ function getNextHeartbeatDelayMs() {
 }
 
 function buildFormBody(data) {
-  var body = new URLSearchParams();
+  var parts = [];
   var key;
   for (key in data) {
     if (!Object.prototype.hasOwnProperty.call(data, key)) continue;
     if (data[key] === null || data[key] === undefined) continue;
-    body.append(key, String(data[key]));
+    parts.push(
+      encodeURIComponent(String(key)) + "=" + encodeURIComponent(String(data[key]))
+    );
   }
-  return body;
+  return parts.join("&");
 }
 
 function getQueryParam(name) {
-  var url = new URL(window.location.href);
-  return url.searchParams.get(name);
+  var query = String(window.location.search || "");
+  if (query.charAt(0) === "?") query = query.slice(1);
+  if (!query) return null;
+
+  var parts = query.split("&");
+  for (var i = 0; i < parts.length; i++) {
+    var pair = parts[i].split("=");
+    var key = decodeURIComponent(pair[0] || "");
+    if (key !== name) continue;
+    return decodeURIComponent((pair[1] || "").replace(/\+/g, " "));
+  }
+  return null;
 }
 // UUID v4 compatible with older Android WebView (e.g., Android 9)
 // - Prefer crypto.randomUUID when available
@@ -75,16 +87,19 @@ function uuidv4() {
   }
 
   if (window.crypto && typeof window.crypto.getRandomValues === "function") {
-    const bytes = new Uint8Array(16);
+    var bytes = new Uint8Array(16);
     window.crypto.getRandomValues(bytes);
 
     // RFC 4122 version 4
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
 
-    const hex = Array.from(bytes)
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
+    var hex = "";
+    for (var i = 0; i < bytes.length; i++) {
+      var value = bytes[i].toString(16);
+      if (value.length < 2) value = "0" + value;
+      hex += value;
+    }
 
     return (
       hex.slice(0, 8) +
@@ -138,18 +153,18 @@ function clearActivationCode() {
 // ============================================
 function DeviceManager(deviceId) {
   this.deviceId       = deviceId || getDeviceId();
-    this.activationCode = getActivationCode();
+  this.activationCode = getActivationCode();
 
   this.isActive  = false;
   this.branchId  = null;
 
   this.resultsInterval   = null;
-    this.heartbeatInterval = null;
+  this.heartbeatInterval = null;
 
   this.ws             = null;
-    this.wsRetryAttempt = 0;
+  this.wsRetryAttempt = 0;
   this.wsRetryTimer   = null;
-  }
+}
 
 DeviceManager.prototype.fetchContextOnce = function () {
   var self = this;
@@ -197,6 +212,9 @@ DeviceManager.prototype.registerDevice = function () {
   return fetch(apiBase + ENDPOINTS.register, {
     method: "POST",
     cache: "no-store",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+    },
     body: buildFormBody({ device_id: self.deviceId }),
   }).then(function (res) {
     if (!res.ok) {
@@ -218,41 +236,41 @@ DeviceManager.prototype.connectSocket = function () {
   var self = this;
   if (!self.activationCode) return;
 
-    if (
+  if (
     self.ws &&
     (self.ws.readyState === WebSocket.OPEN ||
       self.ws.readyState === WebSocket.CONNECTING)
-    ) {
-      return;
-    }
+  ) {
+    return;
+  }
 
   if (self.wsRetryTimer) {
     clearTimeout(self.wsRetryTimer);
     self.wsRetryTimer = null;
-    }
+  }
 
   var wsBase = getWsBase();
   var url    = wsBase + "/ws/device/" + encodeURIComponent(self.activationCode) + "/";
   self.ws    = new WebSocket(url);
 
   self.ws.onopen = function () {
-      console.log("WebSocket conectado:", url);
+    console.log("WebSocket conectado:", url);
     self.wsRetryAttempt = 0;
-    };
+  };
 
   self.ws.onmessage = function (ev) {
-      try {
+    try {
       var msg = JSON.parse(ev.data);
       self.handleSocketMessage(msg);
-      } catch (e) {
-        console.warn("WS parse error:", e);
-      }
-    };
+    } catch (e) {
+      console.warn("WS parse error:", e);
+    }
+  };
 
   self.ws.onclose = function () {
-      console.warn("WebSocket desconectado, reintentando...");
+    console.warn("WebSocket desconectado, reintentando...");
     self.scheduleReconnect();
-    };
+  };
 
   self.ws.onerror = function () {};
 };
@@ -269,35 +287,35 @@ DeviceManager.prototype.scheduleReconnect = function () {
   self.wsRetryTimer = setTimeout(function () {
     self.wsRetryTimer = null;
     self.connectSocket();
-    }, delay);
+  }, delay);
 };
 
 DeviceManager.prototype.handleSocketMessage = function (data) {
   // FIX: data?.type → data && data.type
   if (data && data.type === "device_assigned") {
-      if (!data.branch_id) return;
-      if (this.isActive && this.branchId === data.branch_id) return;
-      this.activate(data.branch_id);
-      return;
-    }
+    if (!data.branch_id) return;
+    if (this.isActive && this.branchId === data.branch_id) return;
+    this.activate(data.branch_id);
+    return;
+  }
 
   if (data && data.type === "branch_changed") {
-      if (this.branchId !== data.branch_id) {
-        this.branchId = data.branch_id;
-        window.dispatchEvent(new CustomEvent("branchChanged", { detail: data }));
-      }
+    if (this.branchId !== data.branch_id) {
+      this.branchId = data.branch_id;
+      window.dispatchEvent(new CustomEvent("branchChanged", { detail: data }));
     }
+  }
 };
 
 DeviceManager.prototype.activate = function (branchId) {
-    if (!branchId) return;
-    if (this.isActive && this.branchId === branchId) return;
+  if (!branchId) return;
+  if (this.isActive && this.branchId === branchId) return;
 
   this.isActive  = true;
   this.branchId  = branchId;
 
-    this.startHeartbeat();
-    this.startResultsPolling();
+  this.startHeartbeat();
+  this.startResultsPolling();
 
   window.dispatchEvent(new CustomEvent("deviceActivated", { detail: { branchId: branchId } }));
 
@@ -401,20 +419,20 @@ DeviceManager.prototype.syncStatusOnce = function () {
 };
 
 DeviceManager.prototype.handleOffline = function () {
-    console.warn("Sin conexión a internet");
+  console.warn("Sin conexión a internet");
   if (this.resultsInterval)   clearInterval(this.resultsInterval);
-    if (this.heartbeatInterval) clearTimeout(this.heartbeatInterval);
+  if (this.heartbeatInterval) clearTimeout(this.heartbeatInterval);
   this.resultsInterval   = null;
-    this.heartbeatInterval = null;
+  this.heartbeatInterval = null;
 };
 
 DeviceManager.prototype.handleOnline = function () {
-    console.log("Conexión restaurada");
-    if (this.isActive) {
-      this.startHeartbeat();
-      this.startResultsPolling();
-    }
-    this.connectSocket();
+  console.log("Conexión restaurada");
+  if (this.isActive) {
+    this.startHeartbeat();
+    this.startResultsPolling();
+  }
+  this.connectSocket();
 };
 
 // Exponer globalmente para que app.js lo use sin import
