@@ -60,8 +60,8 @@ class Command(BaseCommand):
         self._warm_cruz_daily_content(local_now=local_now, current_date=current_date)
 
     def _warm_cruz_daily_content(self, *, local_now, current_date):
-        if local_now.hour < 8:
-            self.stdout.write("SKIP cruz_daily_content: aun no inicia la ventana diaria (08:00 Vzla).")
+        if local_now.hour < 6:
+            self.stdout.write("SKIP cruz_daily_content: aun no inicia la ventana diaria (06:00 Vzla).")
             return
 
         latest_date = CruzDailyContent.objects.order_by("-draw_date").values_list("draw_date", flat=True).first()

@@ -468,9 +468,9 @@ class WarmScraperDataCommandTestCase(TestCase):
         mock_call_command.assert_called_once_with("scrape_cruz_daily_content")
 
     @patch("core.management.commands.warm_scraper_data.call_command")
-    def test_warm_scraper_data_skips_cruz_daily_before_eight_am(self, mock_call_command):
+    def test_warm_scraper_data_skips_cruz_daily_before_six_am(self, mock_call_command):
         fixed_now = timezone.make_aware(
-            datetime(2026, 3, 29, 7, 59, 0),
+            datetime(2026, 3, 29, 5, 59, 0),
             timezone.get_current_timezone(),
         )
 

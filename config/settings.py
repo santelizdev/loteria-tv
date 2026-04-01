@@ -225,7 +225,7 @@ CELERY_BEAT_SCHEDULE = {
     },
     "scrape_cruz_daily_content": {
         "task": "core.tasks.scrape_cruz_daily_content",
-        "schedule": crontab(minute=0, hour=8),
+        "schedule": crontab(minute=0, hour=6),
     },
     "purge_scraper_executions": {
         "task": "core.tasks.purge_scraper_executions",
