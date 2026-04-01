@@ -10,6 +10,11 @@ class ScraperIncident(models.Model):
         OPEN = "open", "Open"
         RESOLVED = "resolved", "Resolved"
 
+    class ContingencyStage(models.TextChoices):
+        OBSERVING = "observing", "Observing"
+        FALLBACK_ACTIVE = "fallback_active", "Fallback active"
+        MANUAL_REQUIRED = "manual_required", "Manual required"
+
     fingerprint = models.CharField(max_length=255, unique=True)
     scraper_key = models.CharField(max_length=64, db_index=True)
     label = models.CharField(max_length=120)
@@ -25,6 +30,17 @@ class ScraperIncident(models.Model):
     failure_reason_code = models.CharField(max_length=64, blank=True, default="")
     summary = models.TextField(blank=True, default="")
     evidence_summary = models.TextField(blank=True, default="")
+    contingency_stage = models.CharField(
+        max_length=24,
+        choices=ContingencyStage.choices,
+        default=ContingencyStage.OBSERVING,
+        db_index=True,
+    )
+    primary_attempt_count = models.PositiveIntegerField(default=1)
+    fallback_attempt_count = models.PositiveIntegerField(default=0)
+    fallback_scraper_key = models.CharField(max_length=64, blank=True, default="")
+    fallback_activated_at = models.DateTimeField(null=True, blank=True)
+    manual_enabled_at = models.DateTimeField(null=True, blank=True)
     alert_sent = models.BooleanField(default=False)
     alert_sent_at = models.DateTimeField(null=True, blank=True)
     occurrence_count = models.PositiveIntegerField(default=1)
@@ -55,6 +71,7 @@ class ScraperIncident(models.Model):
         indexes = [
             models.Index(fields=["scraper_key", "draw_date", "status"]),
             models.Index(fields=["provider_name", "draw_date", "status"]),
+            models.Index(fields=["status", "contingency_stage"]),
         ]
         verbose_name = "Scraper incident"
         verbose_name_plural = "Scraper incidents"

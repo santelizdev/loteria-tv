@@ -8,9 +8,15 @@ from django.utils import timezone
 
 from core.models import AnimalitoResult, CurrentResult, ScraperExecution, ScraperIncident
 from core.services.scraper_ops_contract_service import ScraperOpsContractService
+from core.services.tuazar_animalito_fallback_service import (
+    FallbackAttemptResult,
+    TuAzarAnimalitoFallbackService,
+)
 
 STRICT_EXPECTED_GROUP_GRACE_MINUTES = 12
 STRICT_GROUP_TIME_TOLERANCE_MINUTES = 15
+PRIMARY_ATTEMPT_THRESHOLD = 3
+FALLBACK_ATTEMPT_THRESHOLD = 3
 BASELINE_PROVIDER_START_TIMES = {
     "lotoven_triples": "08:15",
     "tuazar_triples": "09:15",
@@ -170,6 +176,11 @@ class ScraperExecutionService:
             cls._open_or_refresh_incident(execution=execution, candidate=candidate)
             for candidate in candidates
         ]
+        cls._apply_contingency_policies(
+            execution=execution,
+            incidents=opened,
+            now=now,
+        )
         cls._retire_obsolete_open_incidents(
             execution=execution,
             now=now,
@@ -398,6 +409,12 @@ class ScraperExecutionService:
             "failure_reason_code": candidate.failure_reason_code,
             "summary": candidate.summary,
             "evidence_summary": candidate.evidence_summary,
+            "contingency_stage": ScraperIncident.ContingencyStage.OBSERVING,
+            "primary_attempt_count": 1,
+            "fallback_attempt_count": 0,
+            "fallback_scraper_key": "",
+            "fallback_activated_at": None,
+            "manual_enabled_at": None,
             "first_detected_at": now,
             "last_detected_at": now,
             "last_execution": execution,
@@ -427,8 +444,16 @@ class ScraperExecutionService:
         incident.last_execution = execution
         incident.occurrence_count += 1
         if was_resolved:
+            incident.contingency_stage = ScraperIncident.ContingencyStage.OBSERVING
+            incident.primary_attempt_count = 1
+            incident.fallback_attempt_count = 0
+            incident.fallback_scraper_key = ""
+            incident.fallback_activated_at = None
+            incident.manual_enabled_at = None
             incident.alert_sent = False
             incident.alert_sent_at = None
+        elif incident.contingency_stage == ScraperIncident.ContingencyStage.OBSERVING:
+            incident.primary_attempt_count += 1
         incident.resolved_at = None
         incident.resolved_by = None
         incident.resolution_note = ""
@@ -446,6 +471,12 @@ class ScraperExecutionService:
                 "failure_reason_code",
                 "summary",
                 "evidence_summary",
+                "contingency_stage",
+                "primary_attempt_count",
+                "fallback_attempt_count",
+                "fallback_scraper_key",
+                "fallback_activated_at",
+                "manual_enabled_at",
                 "last_detected_at",
                 "last_execution",
                 "occurrence_count",
@@ -458,6 +489,156 @@ class ScraperExecutionService:
             ]
         )
         return incident
+
+    @classmethod
+    def _apply_contingency_policies(
+        cls,
+        *,
+        execution: ScraperExecution,
+        incidents: list[ScraperIncident],
+        now,
+    ) -> None:
+        for incident in incidents:
+            if incident.status != ScraperIncident.Status.OPEN:
+                continue
+            if incident.failure_reason_code == "command_failed":
+                continue
+            cls._advance_incident_contingency_stage(
+                incident=incident,
+                execution=execution,
+                now=now,
+            )
+
+    @classmethod
+    def _advance_incident_contingency_stage(
+        cls,
+        *,
+        incident: ScraperIncident,
+        execution: ScraperExecution,
+        now,
+    ) -> None:
+        stage = incident.contingency_stage or ScraperIncident.ContingencyStage.OBSERVING
+
+        if stage == ScraperIncident.ContingencyStage.OBSERVING:
+            if incident.primary_attempt_count < PRIMARY_ATTEMPT_THRESHOLD:
+                return
+            fallback_scraper_key = cls._get_fallback_scraper_key(incident)
+            if fallback_scraper_key:
+                incident.contingency_stage = ScraperIncident.ContingencyStage.FALLBACK_ACTIVE
+                incident.fallback_scraper_key = fallback_scraper_key
+                incident.fallback_activated_at = now
+                cls._reset_alert_state(incident)
+                incident.save(
+                    update_fields=[
+                        "contingency_stage",
+                        "fallback_scraper_key",
+                        "fallback_activated_at",
+                        "alert_sent",
+                        "alert_sent_at",
+                        "updated_at",
+                    ]
+                )
+                cls._run_fallback_attempt(incident=incident, execution=execution, now=now)
+                return
+            cls._mark_incident_manual_required(incident=incident, now=now)
+            return
+
+        if stage == ScraperIncident.ContingencyStage.FALLBACK_ACTIVE:
+            cls._run_fallback_attempt(incident=incident, execution=execution, now=now)
+
+    @classmethod
+    def _mark_incident_manual_required(cls, *, incident: ScraperIncident, now) -> None:
+        incident.contingency_stage = ScraperIncident.ContingencyStage.MANUAL_REQUIRED
+        incident.manual_enabled_at = incident.manual_enabled_at or now
+        cls._reset_alert_state(incident)
+        incident.save(
+            update_fields=[
+                "contingency_stage",
+                "manual_enabled_at",
+                "alert_sent",
+                "alert_sent_at",
+                "updated_at",
+            ]
+        )
+
+    @classmethod
+    def _run_fallback_attempt(
+        cls,
+        *,
+        incident: ScraperIncident,
+        execution: ScraperExecution,
+        now,
+    ) -> None:
+        result = cls._execute_fallback(incident=incident, target_date=execution.draw_date)
+        incident.last_execution = execution
+
+        if result.success:
+            incident.evidence_summary = (
+                f"{incident.evidence_summary} | fallback_active={result.scraper_key} persisted={result.rows_persisted}"
+            ).strip()
+            incident.save(
+                update_fields=[
+                    "evidence_summary",
+                    "last_execution",
+                    "updated_at",
+                ]
+            )
+            return
+
+        incident.fallback_attempt_count += 1
+        incident.evidence_summary = (
+            f"{incident.evidence_summary} | fallback_fail_{incident.fallback_attempt_count}={result.detail or result.scraper_key}"
+        ).strip()
+        if incident.fallback_attempt_count >= FALLBACK_ATTEMPT_THRESHOLD:
+            incident.save(
+                update_fields=[
+                    "fallback_attempt_count",
+                    "evidence_summary",
+                    "last_execution",
+                    "updated_at",
+                ]
+            )
+            cls._mark_incident_manual_required(incident=incident, now=now)
+            return
+
+        incident.save(
+            update_fields=[
+                "fallback_attempt_count",
+                "evidence_summary",
+                "last_execution",
+                "updated_at",
+            ]
+        )
+
+    @classmethod
+    def _execute_fallback(cls, *, incident: ScraperIncident, target_date):
+        if incident.fallback_scraper_key == TuAzarAnimalitoFallbackService.SCRAPER_KEY:
+            return TuAzarAnimalitoFallbackService.run_lottorey(
+                target_date=target_date,
+                incident=incident,
+            )
+        return FallbackAttemptResult(
+            scraper_key=incident.fallback_scraper_key or "",
+            provider_name=incident.provider_name or "",
+            rows_persisted=0,
+            success=False,
+            detail="No fallback scraper configured.",
+        )
+
+    @classmethod
+    def _get_fallback_scraper_key(cls, incident: ScraperIncident) -> str:
+        if incident.scraper_key != "lotoven_animalitos":
+            return ""
+        if incident.detection_scope != "provider":
+            return ""
+        if incident.provider_name != "Lotto Rey":
+            return ""
+        return TuAzarAnimalitoFallbackService.SCRAPER_KEY
+
+    @staticmethod
+    def _reset_alert_state(incident: ScraperIncident) -> None:
+        incident.alert_sent = False
+        incident.alert_sent_at = None
 
     @classmethod
     def _retire_obsolete_open_incidents(

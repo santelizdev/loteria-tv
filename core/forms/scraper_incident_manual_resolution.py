@@ -69,4 +69,6 @@ class ScraperIncidentManualResolutionForm(forms.Form):
         incident = self.incident
         if incident.status != ScraperIncident.Status.OPEN:
             raise forms.ValidationError("Solo se puede intervenir manualmente un incidente abierto.")
+        if incident.contingency_stage != ScraperIncident.ContingencyStage.MANUAL_REQUIRED:
+            raise forms.ValidationError("La carga manual aun no esta habilitada para este incidente.")
         return cleaned_data

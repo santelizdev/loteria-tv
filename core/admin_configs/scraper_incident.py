@@ -22,15 +22,18 @@ class ScraperIncidentAdmin(admin.ModelAdmin):
         "incident_target",
         "draw_date",
         "status",
+        "contingency_stage",
         "alert_state",
         "severity",
         "failure_reason_code",
         "occurrence_count",
+        "primary_attempt_count",
+        "fallback_attempt_count",
         "resolved_by",
         "last_detected_at",
         "resolved_at",
     )
-    list_filter = ("status", "alert_sent", "severity", "detection_scope", "failure_reason_code", "draw_date", "scraper_key")
+    list_filter = ("status", "contingency_stage", "alert_sent", "severity", "detection_scope", "failure_reason_code", "draw_date", "scraper_key")
     search_fields = ("label", "scraper_key", "provider_name", "summary", "fingerprint")
     actions = ("send_telegram_alert_now", "mark_selected_resolved", "reopen_selected_incidents")
     list_select_related = ("resolved_by", "last_execution")
@@ -50,6 +53,12 @@ class ScraperIncidentAdmin(admin.ModelAdmin):
         "failure_reason_code",
         "summary",
         "evidence_summary",
+        "contingency_stage",
+        "primary_attempt_count",
+        "fallback_attempt_count",
+        "fallback_scraper_key",
+        "fallback_activated_at",
+        "manual_enabled_at",
         "alert_sent",
         "alert_sent_at",
         "occurrence_count",
@@ -83,6 +92,19 @@ class ScraperIncidentAdmin(admin.ModelAdmin):
                     "severity",
                     "failure_reason_code",
                     "manual_resolution_link",
+                ),
+            },
+        ),
+        (
+            "Contingencia",
+            {
+                "fields": (
+                    "contingency_stage",
+                    "primary_attempt_count",
+                    "fallback_attempt_count",
+                    "fallback_scraper_key",
+                    "fallback_activated_at",
+                    "manual_enabled_at",
                 ),
             },
         ),
@@ -132,6 +154,8 @@ class ScraperIncidentAdmin(admin.ModelAdmin):
     def manual_resolution_link(self, obj):
         if obj.status != ScraperIncident.Status.OPEN:
             return "Solo disponible para incidentes abiertos."
+        if obj.contingency_stage != ScraperIncident.ContingencyStage.MANUAL_REQUIRED:
+            return "Disponible cuando el incidente escale a carga manual."
         url = reverse("admin:core_scraperincident_manual_resolve", args=[obj.pk])
         return format_html('<a class="button" href="{}">Carga manual controlada</a>', url)
 
@@ -152,6 +176,8 @@ class ScraperIncidentAdmin(admin.ModelAdmin):
         incident = get_object_or_404(ScraperIncident, pk=object_id)
         if not ScraperPermissionService.user_can_resolve_incidents(request.user):
             raise PermissionDenied("No tienes permiso para resolver incidentes manualmente.")
+        if incident.contingency_stage != ScraperIncident.ContingencyStage.MANUAL_REQUIRED:
+            raise PermissionDenied("La carga manual solo se habilita cuando el incidente ya requiere contingencia manual.")
 
         form = ScraperIncidentManualResolutionForm(
             request.POST or None,
@@ -220,6 +246,14 @@ class ScraperIncidentAdmin(admin.ModelAdmin):
     def reopen_selected_incidents(self, request, queryset):
         updated = queryset.update(
             status=ScraperIncident.Status.OPEN,
+            contingency_stage=ScraperIncident.ContingencyStage.OBSERVING,
+            primary_attempt_count=1,
+            fallback_attempt_count=0,
+            fallback_scraper_key="",
+            fallback_activated_at=None,
+            manual_enabled_at=None,
+            alert_sent=False,
+            alert_sent_at=None,
             resolved_at=None,
             resolved_by=None,
             resolution_note="",

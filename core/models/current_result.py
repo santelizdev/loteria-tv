@@ -9,6 +9,7 @@ from .provider import Provider
 class CurrentResult(models.Model):
     class ResultOrigin(models.TextChoices):
         AUTOMATIC_VALID = "automatic_valid", "Automatic valid"
+        AUTOMATIC_FALLBACK = "automatic_fallback", "Automatic fallback"
         MANUAL_CONTINGENCY = "manual_contingency", "Manual contingency"
 
     """

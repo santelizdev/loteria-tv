@@ -49,6 +49,8 @@ class ManualIncidentResolutionServiceTestCase(TestCase):
             failure_reason_code="missing_expected_group",
             summary="Falta el grupo esperado Triple Chance A 16:00.",
             evidence_summary="expected=1 persisted=0 missing=1",
+            contingency_stage=ScraperIncident.ContingencyStage.MANUAL_REQUIRED,
+            manual_enabled_at=timezone.now(),
         )
 
     def test_manual_resolution_replaces_result_and_resolves_incident(self):
@@ -135,6 +137,8 @@ class ManualIncidentResolutionFormTestCase(TestCase):
             failure_reason_code="missing_expected_group",
             summary="Falta el grupo esperado Triple Chance A 16:00.",
             evidence_summary="expected=1 persisted=0 missing=1",
+            contingency_stage=ScraperIncident.ContingencyStage.MANUAL_REQUIRED,
+            manual_enabled_at=timezone.now(),
         )
 
         form = ScraperIncidentManualResolutionForm(incident=incident)
@@ -157,6 +161,8 @@ class ManualIncidentResolutionFormTestCase(TestCase):
             failure_reason_code="missing_expected_group",
             summary="Falta Condor Gana 09:00.",
             evidence_summary="expected=1 persisted=0 missing=1",
+            contingency_stage=ScraperIncident.ContingencyStage.MANUAL_REQUIRED,
+            manual_enabled_at=timezone.now(),
         )
 
         form = ScraperIncidentManualResolutionForm(incident=incident)
@@ -195,6 +201,8 @@ class ManualIncidentResolutionAdminFlowTestCase(TestCase):
             failure_reason_code="missing_expected_group",
             summary="Falta Condor Gana 09:00.",
             evidence_summary="expected=1 persisted=0 missing=1",
+            contingency_stage=ScraperIncident.ContingencyStage.MANUAL_REQUIRED,
+            manual_enabled_at=timezone.now(),
         )
         self.client.force_login(self.user)
 
@@ -269,7 +277,7 @@ class ManualResolutionReopenFlowTestCase(TestCase):
         for provider_name, times in LOTOVEN_STRICT_SCHEDULE.items():
             provider = self._upsert_provider(provider_name)
             for time_str in times:
-                if (provider_name, time_str) == ("Triple Chance A", "16:00"):
+                if (provider_name, time_str) == ("Triple Caracas A", "16:30"):
                     continue
                 CurrentResult.objects.update_or_create(
                     provider=provider,
@@ -298,17 +306,20 @@ class ManualResolutionReopenFlowTestCase(TestCase):
 
         incident = ScraperIncident.objects.get(
             scraper_key="lotoven_triples",
-            provider_name="Triple Chance A",
+            provider_name="Triple Caracas A",
             failure_reason_code="missing_expected_group",
         )
-        provider = Provider.objects.get(name="Triple Chance A")
+        incident.contingency_stage = ScraperIncident.ContingencyStage.MANUAL_REQUIRED
+        incident.manual_enabled_at = self.fixed_now
+        incident.save(update_fields=["contingency_stage", "manual_enabled_at", "updated_at"])
+        provider = Provider.objects.get(name="Triple Caracas A")
 
         ManualResultInterventionService.resolve_incident_manually(
             incident=incident,
             user=self.user,
             cleaned_data={
                 "provider": provider,
-                "draw_time": datetime.strptime("16:00", "%H:%M").time(),
+                "draw_time": datetime.strptime("16:30", "%H:%M").time(),
                 "winning_number": "555",
                 "signo": "",
                 "image_url": "",
@@ -327,7 +338,7 @@ class ManualResolutionReopenFlowTestCase(TestCase):
         incident.refresh_from_db()
         self.assertEqual(incident.status, ScraperIncident.Status.RESOLVED)
         self.assertEqual(incident.occurrence_count, 1)
-        self.assertEqual(mock_post.call_count, 1)
+        self.assertEqual(mock_post.call_count, 0)
 
 
 class ScraperPermissionServiceTestCase(TestCase):
@@ -375,6 +386,8 @@ class ScraperPermissionServiceTestCase(TestCase):
             failure_reason_code="missing_expected_group",
             summary="Falta grupo.",
             evidence_summary="expected=1 persisted=0 missing=1",
+            contingency_stage=ScraperIncident.ContingencyStage.MANUAL_REQUIRED,
+            manual_enabled_at=timezone.now(),
         )
 
         url = reverse("admin:core_scraperincident_manual_resolve", args=[incident.pk])

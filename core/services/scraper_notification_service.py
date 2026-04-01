@@ -10,18 +10,6 @@ from django.utils import timezone
 from core.models import ScraperHealth, ScraperIncident
 from core.services.scraper_health_service import ScraperHealthService
 
-INCIDENT_NOTIFICATION_POLICY = {
-    ("command_failed", None): {"min_age_minutes": 0, "min_occurrences": 1},
-    ("missing_scraper_rows", "lotoven_animalitos"): {"min_age_minutes": 10, "min_occurrences": 2},
-    ("missing_scraper_rows", None): {"min_age_minutes": 15, "min_occurrences": 2},
-    ("missing_provider_rows", "lotoven_triples"): {"min_age_minutes": 15, "min_occurrences": 3},
-    ("missing_provider_rows", "tuazar_triples"): {"min_age_minutes": 20, "min_occurrences": 3},
-    ("missing_provider_rows", None): {"min_age_minutes": 20, "min_occurrences": 3},
-    ("missing_expected_group", "lotoven_triples"): {"min_age_minutes": 20, "min_occurrences": 3},
-    ("missing_expected_group", None): {"min_age_minutes": 15, "min_occurrences": 2},
-}
-
-
 @dataclass(frozen=True)
 class NotificationDecision:
     monitor: ScraperHealth
@@ -213,18 +201,31 @@ class ScraperNotificationService:
 
     @classmethod
     def build_incident_message(cls, incident: ScraperIncident) -> str:
+        title = "LoteriaTV - Incidente de scraper"
+        if incident.failure_reason_code == "command_failed":
+            title = "LoteriaTV - Falla critica de scraper"
+        elif incident.contingency_stage == ScraperIncident.ContingencyStage.FALLBACK_ACTIVE:
+            title = "LoteriaTV - Scraper de emergencia activado"
+        elif incident.contingency_stage == ScraperIncident.ContingencyStage.MANUAL_REQUIRED:
+            title = "LoteriaTV - Carga manual requerida"
+
         lines = [
-            "LoteriaTV - Incidente de scraper",
+            title,
             f"Incidente: #{incident.id}",
             f"Scraper: {incident.label}",
             f"Fecha objetivo: {incident.draw_date}",
             f"Estado: {incident.status}",
             f"Severidad: {incident.severity or '-'}",
             f"Motivo: {incident.failure_reason_code or '-'}",
+            f"Etapa: {incident.contingency_stage or '-'}",
             f"Grupo: {cls._build_incident_target(incident)}",
+            f"Intentos principal: {incident.primary_attempt_count}",
+            f"Intentos emergencia: {incident.fallback_attempt_count}",
             f"Resumen: {incident.summary or '-'}",
             f"Evidencia: {incident.evidence_summary or '-'}",
         ]
+        if incident.fallback_scraper_key:
+            lines.append(f"Fallback: {incident.fallback_scraper_key}")
         admin_url = cls.build_incident_admin_url(incident)
         if admin_url:
             lines.append(f"Admin: {admin_url}")
@@ -244,26 +245,14 @@ class ScraperNotificationService:
         return f"{provider_name} @ {draw_time}"
 
     @classmethod
-    def _get_incident_notification_policy(cls, incident: ScraperIncident) -> dict:
-        return INCIDENT_NOTIFICATION_POLICY.get(
-            (incident.failure_reason_code, incident.scraper_key),
-            INCIDENT_NOTIFICATION_POLICY.get(
-                (incident.failure_reason_code, None),
-                {"min_age_minutes": 10, "min_occurrences": 2},
-            ),
-        )
-
-    @classmethod
     def _is_incident_ready_for_notification(cls, incident: ScraperIncident, *, now) -> bool:
-        policy = cls._get_incident_notification_policy(incident)
-        age_minutes = max(
-            0.0,
-            (now - (incident.first_detected_at or now)).total_seconds() / 60.0,
-        )
-        return (
-            incident.occurrence_count >= int(policy["min_occurrences"])
-            and age_minutes >= float(policy["min_age_minutes"])
-        )
+        del now
+        if incident.failure_reason_code == "command_failed":
+            return True
+        return incident.contingency_stage in {
+            ScraperIncident.ContingencyStage.FALLBACK_ACTIVE,
+            ScraperIncident.ContingencyStage.MANUAL_REQUIRED,
+        }
 
     @classmethod
     def _dispatch_message(cls, message: str) -> None:

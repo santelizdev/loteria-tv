@@ -6,18 +6,21 @@ from unittest.mock import patch
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from core.models import CurrentResult, Provider, ScraperExecution, ScraperHealth, ScraperIncident
+from core.models import AnimalitoResult, CurrentResult, Provider, ScraperExecution, ScraperHealth, ScraperIncident
 from core.services.scraper_execution_service import (
     BASELINE_PROVIDER_START_TIMES,
+    FALLBACK_ATTEMPT_THRESHOLD,
     LOTOVEN_ANIMALITO_BASELINE_PROVIDERS,
     LOTOVEN_STRICT_SCHEDULE,
     LOTOVEN_TABLE_SIMPLE_PROVIDERS,
+    PRIMARY_ATTEMPT_THRESHOLD,
     SCRAPER_SCOPE_START_TIMES,
     ScraperExecutionService,
     STRICT_EXPECTED_GROUP_GRACE_MINUTES,
 )
 from core.services.scraper_health_service import ScraperHealthService
 from core.services.scraper_notification_service import ScraperNotificationService
+from core.services.tuazar_animalito_fallback_service import FallbackAttemptResult, TuAzarAnimalitoFallbackService
 
 
 class ScraperExecutionFlowTestCase(TestCase):
@@ -53,6 +56,28 @@ class ScraperExecutionFlowTestCase(TestCase):
                     draw_date=self.draw_date,
                     draw_time=datetime.strptime(time_str, "%H:%M").time(),
                     defaults={"winning_number": "222", "image_url": "", "extra": None},
+                )
+
+    def _seed_lotoven_animalitos_results(self, *, missing_provider: str | None = None) -> None:
+        draw_times = ("08:00", "09:00")
+        for provider_name in LOTOVEN_ANIMALITO_BASELINE_PROVIDERS:
+            if provider_name == missing_provider:
+                continue
+            provider = self._upsert_provider(provider_name)
+            provider.source_url = "https://lotoven.com/animalitos/"
+            provider.logo_url = "https://lotoven.com/logo.png"
+            provider.save(update_fields=["source_url", "logo_url"])
+            for draw_time in draw_times:
+                AnimalitoResult.objects.update_or_create(
+                    provider=provider,
+                    draw_date=self.draw_date,
+                    draw_time=datetime.strptime(draw_time, "%H:%M").time(),
+                    defaults={
+                        "animal_number": "07",
+                        "animal_name": "Perico",
+                        "animal_image_url": "https://lotoven.com/animal.png",
+                        "provider_logo_url": "https://lotoven.com/logo.png",
+                    },
                 )
 
     @patch("core.services.scraper_notification_service.requests.post")
@@ -284,7 +309,7 @@ class ScraperExecutionFlowTestCase(TestCase):
         SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
     )
     @patch("core.services.scraper_notification_service.requests.post")
-    def test_notify_pending_incidents_waits_for_persistent_missing_group(self, mock_post):
+    def test_notify_pending_incidents_only_sends_when_manual_required(self, mock_post):
         incident = ScraperIncident.objects.create(
             fingerprint="lotoven_triples|2026-03-23|group|Triple Caracas A|16:30|missing_expected_group",
             scraper_key="lotoven_triples",
@@ -300,8 +325,10 @@ class ScraperExecutionFlowTestCase(TestCase):
             failure_reason_code="missing_expected_group",
             summary="Falta el grupo esperado.",
             evidence_summary="test",
-            occurrence_count=2,
-            first_detected_at=self.fixed_now - timedelta(minutes=10),
+            contingency_stage=ScraperIncident.ContingencyStage.OBSERVING,
+            occurrence_count=3,
+            primary_attempt_count=PRIMARY_ATTEMPT_THRESHOLD,
+            first_detected_at=self.fixed_now - timedelta(minutes=25),
             last_detected_at=self.fixed_now,
         )
 
@@ -315,9 +342,9 @@ class ScraperExecutionFlowTestCase(TestCase):
         self.assertFalse(incident.alert_sent)
         mock_post.assert_not_called()
 
-        incident.occurrence_count = 3
-        incident.first_detected_at = self.fixed_now - timedelta(minutes=25)
-        incident.save(update_fields=["occurrence_count", "first_detected_at", "updated_at"])
+        incident.contingency_stage = ScraperIncident.ContingencyStage.MANUAL_REQUIRED
+        incident.manual_enabled_at = self.fixed_now
+        incident.save(update_fields=["contingency_stage", "manual_enabled_at", "updated_at"])
 
         sent = ScraperNotificationService.notify_pending_incidents(
             incidents=[incident],
@@ -412,3 +439,125 @@ class ScraperExecutionFlowTestCase(TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0].failure_reason_code, "missing_provider_rows")
         self.assertEqual(candidates[0].provider_name, "Mega Animal 40")
+
+    @override_settings(
+        SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
+        SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
+    )
+    @patch("core.services.scraper_notification_service.requests.post")
+    @patch("core.services.scraper_health_service.call_command")
+    def test_triples_missing_group_escalates_to_manual_after_three_attempts(self, mock_call_command, mock_post):
+        def create_partial_lotoven(_command_name):
+            self._seed_lotoven_results(missing_group=("Triple Caracas A", "16:30"))
+            return None
+
+        mock_call_command.side_effect = create_partial_lotoven
+
+        with patch("core.services.scraper_health_service.timezone.now", return_value=self.fixed_now):
+            with patch("core.services.scraper_execution_service.timezone.now", return_value=self.fixed_now):
+                with patch("core.services.scraper_execution_service.timezone.localdate", return_value=self.draw_date):
+                    for _ in range(PRIMARY_ATTEMPT_THRESHOLD):
+                        ScraperHealthService.run_registered("lotoven_triples")
+
+        incident = ScraperIncident.objects.get(
+            scraper_key="lotoven_triples",
+            provider_name="Triple Caracas A",
+            failure_reason_code="missing_expected_group",
+        )
+        self.assertEqual(incident.contingency_stage, ScraperIncident.ContingencyStage.MANUAL_REQUIRED)
+        self.assertEqual(incident.primary_attempt_count, PRIMARY_ATTEMPT_THRESHOLD)
+        self.assertIsNotNone(incident.manual_enabled_at)
+        self.assertTrue(incident.alert_sent)
+        self.assertEqual(mock_post.call_count, 1)
+
+    @override_settings(
+        SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
+        SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
+    )
+    @patch("core.services.scraper_notification_service.requests.post")
+    @patch("core.services.scraper_execution_service.TuAzarAnimalitoFallbackService.run_lottorey")
+    @patch("core.services.scraper_health_service.call_command")
+    def test_lottorey_missing_provider_activates_fallback_after_three_attempts(
+        self,
+        mock_call_command,
+        mock_run_fallback,
+        mock_post,
+    ):
+        def create_partial_rows(_command_name):
+            self._seed_lotoven_animalitos_results(missing_provider="Lotto Rey")
+            return None
+
+        mock_call_command.side_effect = create_partial_rows
+        mock_run_fallback.return_value = FallbackAttemptResult(
+            scraper_key=TuAzarAnimalitoFallbackService.SCRAPER_KEY,
+            provider_name="Lotto Rey",
+            rows_persisted=3,
+            success=True,
+            detail="fallback ok",
+        )
+
+        with patch("core.services.scraper_health_service.timezone.now", return_value=self.fixed_now):
+            with patch("core.services.scraper_execution_service.timezone.now", return_value=self.fixed_now):
+                with patch("core.services.scraper_execution_service.timezone.localdate", return_value=self.draw_date):
+                    for _ in range(PRIMARY_ATTEMPT_THRESHOLD):
+                        ScraperHealthService.run_registered("lotoven_animalitos")
+
+        incident = ScraperIncident.objects.get(
+            scraper_key="lotoven_animalitos",
+            provider_name="Lotto Rey",
+            failure_reason_code="missing_provider_rows",
+        )
+        self.assertEqual(incident.contingency_stage, ScraperIncident.ContingencyStage.FALLBACK_ACTIVE)
+        self.assertEqual(incident.primary_attempt_count, PRIMARY_ATTEMPT_THRESHOLD)
+        self.assertEqual(incident.fallback_attempt_count, 0)
+        self.assertEqual(incident.fallback_scraper_key, TuAzarAnimalitoFallbackService.SCRAPER_KEY)
+        self.assertIsNotNone(incident.fallback_activated_at)
+        self.assertTrue(incident.alert_sent)
+        self.assertEqual(mock_run_fallback.call_count, 1)
+        self.assertEqual(mock_post.call_count, 1)
+
+    @override_settings(
+        SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
+        SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
+    )
+    @patch("core.services.scraper_notification_service.requests.post")
+    @patch("core.services.scraper_execution_service.TuAzarAnimalitoFallbackService.run_lottorey")
+    @patch("core.services.scraper_health_service.call_command")
+    def test_lottorey_missing_provider_escalates_to_manual_after_fallback_exhaustion(
+        self,
+        mock_call_command,
+        mock_run_fallback,
+        mock_post,
+    ):
+        def create_partial_rows(_command_name):
+            self._seed_lotoven_animalitos_results(missing_provider="Lotto Rey")
+            return None
+
+        mock_call_command.side_effect = create_partial_rows
+        mock_run_fallback.return_value = FallbackAttemptResult(
+            scraper_key=TuAzarAnimalitoFallbackService.SCRAPER_KEY,
+            provider_name="Lotto Rey",
+            rows_persisted=0,
+            success=False,
+            detail="sin filas en fallback",
+        )
+
+        total_runs = PRIMARY_ATTEMPT_THRESHOLD + FALLBACK_ATTEMPT_THRESHOLD - 1
+        with patch("core.services.scraper_health_service.timezone.now", return_value=self.fixed_now):
+            with patch("core.services.scraper_execution_service.timezone.now", return_value=self.fixed_now):
+                with patch("core.services.scraper_execution_service.timezone.localdate", return_value=self.draw_date):
+                    for _ in range(total_runs):
+                        ScraperHealthService.run_registered("lotoven_animalitos")
+
+        incident = ScraperIncident.objects.get(
+            scraper_key="lotoven_animalitos",
+            provider_name="Lotto Rey",
+            failure_reason_code="missing_provider_rows",
+        )
+        self.assertEqual(incident.contingency_stage, ScraperIncident.ContingencyStage.MANUAL_REQUIRED)
+        self.assertEqual(incident.primary_attempt_count, PRIMARY_ATTEMPT_THRESHOLD)
+        self.assertEqual(incident.fallback_attempt_count, FALLBACK_ATTEMPT_THRESHOLD)
+        self.assertIsNotNone(incident.manual_enabled_at)
+        self.assertTrue(incident.alert_sent)
+        self.assertEqual(mock_run_fallback.call_count, FALLBACK_ATTEMPT_THRESHOLD)
+        self.assertEqual(mock_post.call_count, 2)

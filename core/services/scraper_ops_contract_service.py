@@ -60,10 +60,11 @@ class ScraperOpsContractService:
             ),
             real_failure_definition=(
                 "Fallo real cuando la corrida revienta, faltan bloques principales o no queda ningun "
-                "OK del dia. La completitud por horario puntual sigue pendiente."
+                "OK del dia. La completitud por horario puntual sigue pendiente. Tras 3 intentos "
+                "sin resultado util, la contingencia escala directo a carga manual."
             ),
             alert_trigger_definition=(
-                "Crear alerta operativa cuando el monitor detecta failed_today, missing_today o stale."
+                "Telegram solo cuando la contingencia escala a carga manual o el comando falla de forma tecnica."
             ),
             enforcement_status=(
                 "Baseline: cobertura minima por providers y cutoff; falta validacion funcional por horario esperado."
@@ -83,10 +84,11 @@ class ScraperOpsContractService:
             ),
             real_failure_definition=(
                 "Fallo real cuando la corrida revienta, parsea 0 en contexto operativo, no registra "
-                "OK del dia o deja providers baseline sin filas utilizables mientras otros providers del mismo origen si llegaron."
+                "OK del dia o deja providers baseline sin filas utilizables mientras otros providers del mismo origen si llegaron. "
+                "Lotto Rey permite fallback temporal via TuAzar antes de habilitar carga manual."
             ),
             alert_trigger_definition=(
-                "Crear alerta operativa cuando el monitor detecta failed_today, missing_today o stale."
+                "Telegram solo cuando se activa el scraper de emergencia o cuando ya toca carga manual."
             ),
             enforcement_status=(
                 "Baseline: se persiste por provider/horario, pero la validacion funcional exacta sigue abierta."
@@ -106,10 +108,10 @@ class ScraperOpsContractService:
             ),
             real_failure_definition=(
                 "Fallo real cuando la corrida revienta, parsea 0 en horario operativo o no registra "
-                "OK del dia."
+                "OK del dia. Tras 3 intentos sin datos utiles, la contingencia escala a carga manual."
             ),
             alert_trigger_definition=(
-                "Crear alerta operativa cuando el monitor detecta failed_today, missing_today o stale."
+                "Telegram solo cuando la contingencia escala a carga manual o el comando falla de forma tecnica."
             ),
             enforcement_status=(
                 "Baseline: proveedor y persistencia estan acotados, pero falta incidente funcional por horario."
@@ -147,6 +149,11 @@ class ScraperOpsContractService:
                 settings,
                 "SCRAPER_RESULT_MANUAL_ORIGIN_LABEL",
                 "manual_contingency",
+            ),
+            "fallback_origin_label": getattr(
+                settings,
+                "SCRAPER_RESULT_FALLBACK_ORIGIN_LABEL",
+                "automatic_fallback",
             ),
         }
 
@@ -193,6 +200,7 @@ class ScraperOpsContractService:
             f"Grupos viewer={viewer_groups}\n"
             f"Grupos resolver={resolver_groups}\n"
             f"Origen auto={global_contract['automatic_origin_label']}\n"
+            f"Origen fallback={global_contract['fallback_origin_label']}\n"
             f"Origen manual={global_contract['manual_origin_label']}\n"
             f"Scope esperado={scope}\n"
             f"Fallo real={contract.real_failure_definition}\n"

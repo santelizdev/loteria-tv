@@ -36,6 +36,7 @@ from core.services.provider_catalog_service import (
 from core.services.result_window_service import delete_future_rows_for_provider
 from core.services.scraper_notification_service import ScraperNotificationService
 from core.services.scraper_health_service import ScraperHealthService
+from core.services.tuazar_animalito_fallback_service import TuAzarAnimalitoFallbackService
 
 
 TEST_CACHES = {
@@ -66,6 +67,42 @@ class AnimalitoProviderCatalogTestCase(TestCase):
         self.assertTrue(is_visible_animalito_provider("Loto Rey"))
         self.assertTrue(is_visible_animalito_provider("El Guacharito"))
         self.assertTrue(is_visible_animalito_provider("Condor Gana"))
+
+
+class TuAzarAnimalitoFallbackServiceTestCase(TestCase):
+    def test_parse_lottorey_rows_ignores_waiting_cards(self):
+        html = """
+        <div class="lottery-animalitos-grid-container">
+          <div class="resultados">
+            <h2 class="lotResTit lottorey">
+              <img src="/in/loteria/logo_lottorey.png" alt="Logo Lottorey">
+              LOTTOREY
+            </h2>
+            <div class="row resultado">
+              <div class="col-xs-6 col-sm-3">
+                <div>Animalito<br>Lottorey</div>
+                <div><img src="/in/animalitos/lotto_rey/21.jpg"></div>
+                <div><span>21 - GALLO</span></div>
+                <div class="horario"><span>8:30 AM</span></div>
+              </div>
+              <div class="col-xs-6 col-sm-3">
+                <div>Animalito<br>Lottorey</div>
+                <div><img src="/in/animalitos/resultados-espera-lottorey.png"></div>
+                <div><span>- - -</span></div>
+                <div class="horario"><span>9:30 AM</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        """
+
+        rows = TuAzarAnimalitoFallbackService._parse_lottorey_rows(html)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["provider_name"], "Lotto Rey")
+        self.assertEqual(rows[0]["animal_number"], "21")
+        self.assertEqual(rows[0]["animal_name"], "Gallo")
+        self.assertEqual(rows[0]["draw_time_obj"].strftime("%H:%M"), "08:30")
 
 
 @override_settings(CACHES=TEST_CACHES, CHANNEL_LAYERS=TEST_CHANNEL_LAYERS)
