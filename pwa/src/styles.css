@@ -15,17 +15,25 @@
 
   --green: #26cf76;
 
-  --header-h: clamp(3.25rem, 7vh, 4.5rem);
-  --footer-h: clamp(2.5rem, 5vh, 3.375rem);
-  --daily-sidebar-w: clamp(12rem, 16vw, 14.5rem);
+  /* Usamos valores simples en vez de clamp() para compatibilidad con WebViews viejos. */
+  --header-h: 4rem;
+  --footer-h: 3rem;
+  --daily-sidebar-w: 13rem;
 
   --gap: 0.875rem;
   --radius: 0.75rem;
 
-  --title-size: clamp(0.95rem, 1.2vw, 1.35rem);
-  --provider-size: clamp(0.95rem, 1.25vw, 1.35rem);
-  --row-size: clamp(0.8rem, 1vw, 1.1rem);
-  --num-size: clamp(1.15rem, 1.8vw, 1.75rem);
+  --title-size: 1rem;
+  --provider-size: 1.2rem;
+  --row-size: 0.9rem;
+  --num-size: 1.6rem;
+
+  --animal-time-w: 4.7rem;
+  --animal-num-w: 3.6rem;
+  --animal-icon-size: 2.45rem;
+  --animal-name-size: 0.82rem;
+  --animal-row-gap: 0.45rem;
+  --animal-row-pad-x: 0.35rem;
 }
 
 * { box-sizing: border-box; }
@@ -163,7 +171,7 @@ html, body {
 }
 
 .results-pane {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -238,17 +246,19 @@ html, body {
   min-height: 0;
   display: flex;
   align-items: center;
-  justify-content: stretch;
-  padding: 0;
+  justify-content: center;
+  padding: 0.25rem;
   border-radius: 0.625rem;
   overflow: hidden;
   background: transparent;
 }
 
 .daily-card__image {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
   border-radius: 0.625rem;
   background: transparent;
 }
@@ -528,41 +538,49 @@ html, body {
 
 /* animalitos: 3 columnas dentro de row */
 .col__row--animal {
-  grid-template-columns: 90px 78px 1fr;
+  grid-template-columns: var(--animal-time-w) var(--animal-num-w) minmax(0, 1fr);
+  gap: var(--animal-row-gap);
+  padding-left: var(--animal-row-pad-x);
+  padding-right: var(--animal-row-pad-x);
 }
 
 .col__num--animal {
   min-height: 38px;
+  padding: 0 0.25rem;
 }
 
 .col__nameWrap {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--animal-icon-size);
   align-items: center;
-  justify-content: center;
-  gap: 8px;
+  justify-items: stretch;
+  gap: 0.35rem;
   min-width: 0;
   width: 100%;
-  padding: 0 6px;
+  padding: 0 0.15rem;
 }
 
 .col__name {
-  font-size: 0.85rem;
+  font-size: var(--animal-name-size);
   font-weight: 800;
   color: #20335f;
   opacity: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-align: center;
-  max-width: 100%;
+  text-align: left;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
 }
 
 .col__icon {
-  width: 3.25em;
-  height: 3.25em;
+  width: var(--animal-icon-size);
+  height: var(--animal-icon-size);
   border-radius: 50%;
   border: 0.0625rem solid #c8d6ee;
   object-fit: cover;
+  justify-self: center;
   flex: 0 0 auto;
 }
 
@@ -702,15 +720,21 @@ body.theme-dark .ticker {
 /* 720p (y similares: TVs pequeñas, browsers con poco alto) */
 @media (max-width: 1280px), (max-height: 720px) {
   :root {
-    --header-h: clamp(3rem, 6.5vh, 3.75rem);
-    --footer-h: clamp(2.25rem, 4.5vh, 2.75rem);
-    --daily-sidebar-w: clamp(10rem, 15vw, 12rem);
+    --header-h: 3.5rem;
+    --footer-h: 2.5rem;
+    --daily-sidebar-w: 11rem;
     --gap: 0.625rem;
 
     --title-size: 0.95rem;
     --provider-size: 0.95rem;
     --row-size: 0.95rem;
     --num-size: 1.2rem;
+    --animal-time-w: 4.2rem;
+    --animal-num-w: 3.1rem;
+    --animal-icon-size: 2.1rem;
+    --animal-name-size: 0.68rem;
+    --animal-row-gap: 0.28rem;
+    --animal-row-pad-x: 0.2rem;
   }
 
   .client-logo { height: 1.75rem; max-width: 10rem; }
@@ -730,23 +754,30 @@ body.theme-dark .ticker {
   .col__abc-cell--sign { font-size: 0.8rem; }
   .col__row--dual .col__num { font-size: 1rem; min-height: 1.625rem; }
   .col__num--sign { font-size: 0.72rem; }
-  .col__row--animal { grid-template-columns: 5rem 3.9rem 1fr; }
-  .col__icon { width: 3.15em; height: 3.15em; }
+  .col__row--animal { grid-template-columns: var(--animal-time-w) var(--animal-num-w) minmax(0, 1fr); }
+  .col__num--animal { min-height: 1.8rem; font-size: 1.2rem; }
+  .col__icon { width: var(--animal-icon-size); height: var(--animal-icon-size); }
   .ticker { font-size: 0.7rem; height: 1.625rem; line-height: 1.625rem; }
 }
 
 /* 1080p (default “standard” TVs) */
 @media (min-width: 1281px) and (max-width: 2559px) and (min-height: 721px) and (max-height: 1439px) {
   :root {
-    --header-h: clamp(3.25rem, 7vh, 4.5rem);
-    --footer-h: clamp(2.5rem, 5vh, 3.375rem);
-    --daily-sidebar-w: clamp(12rem, 16vw, 14.5rem);
+    --header-h: 4rem;
+    --footer-h: 3rem;
+    --daily-sidebar-w: 13rem;
     --gap: 0.875rem;
 
     --title-size: 1rem;
     --provider-size: 1.25rem;
     --row-size: 0.875rem;
     --num-size: 1.875rem;
+    --animal-time-w: 4.75rem;
+    --animal-num-w: 3.45rem;
+    --animal-icon-size: 2.35rem;
+    --animal-name-size: 0.76rem;
+    --animal-row-gap: 0.35rem;
+    --animal-row-pad-x: 0.25rem;
   }
 
   .client-logo { height: 2.1rem; max-width: 13.75rem; }
@@ -755,8 +786,9 @@ body.theme-dark .ticker {
   .theme-toggle { height: 2em; min-width: 4.6em; }
   .col__row { grid-template-columns: 5.625rem 1fr; }
   .col__row--dual { grid-template-columns: 5.625rem 1fr; }
-  .col__row--animal { grid-template-columns: 5.625rem 4.875rem 1fr; }
-  .col__icon { width: 3.25em; height: 3.25em; }
+  .col__row--animal { grid-template-columns: var(--animal-time-w) var(--animal-num-w) minmax(0, 1fr); }
+  .col__num--animal { min-height: 2rem; font-size: 1.35rem; }
+  .col__icon { width: var(--animal-icon-size); height: var(--animal-icon-size); }
   .ticker { font-size: 0.82rem; }
   .col__num--sign { font-size: 0.82rem; }
 }
@@ -764,15 +796,21 @@ body.theme-dark .ticker {
 /* 4K (UHD) */
 @media (min-width: 2560px), (min-height: 1440px) {
   :root {
-    --header-h: clamp(4rem, 8vh, 5.25rem);
-    --footer-h: clamp(3rem, 5.8vh, 4rem);
-    --daily-sidebar-w: clamp(14rem, 15vw, 17rem);
+    --header-h: 5rem;
+    --footer-h: 3.75rem;
+    --daily-sidebar-w: 16rem;
     --gap: 1.125rem;
 
     --title-size: 1.45rem;
     --provider-size: 1.6rem;
     --row-size: 1.1rem;
     --num-size: 2.2rem;
+    --animal-time-w: 6rem;
+    --animal-num-w: 4.5rem;
+    --animal-icon-size: 2.9rem;
+    --animal-name-size: 0.92rem;
+    --animal-row-gap: 0.5rem;
+    --animal-row-pad-x: 0.4rem;
   }
 
   .topbar { padding: 0.875rem 1.375rem; }
@@ -787,10 +825,11 @@ body.theme-dark .ticker {
   .col__abc-cell--sign { font-size: 1rem; }
   .col__row--dual .col__num { font-size: 1.55rem; min-height: 2.375rem; }
   .col__num--sign { font-size: 1rem; }
-  .col__row--animal { grid-template-columns: 7.5rem 6.25rem 1fr; }
+  .col__row--animal { grid-template-columns: var(--animal-time-w) var(--animal-num-w) minmax(0, 1fr); }
   .col__time { width: 6.5rem; font-size: 1rem; }
   .col__num { font-size: 2.625rem; }
-  .col__icon { width: 3.6em; height: 3.6em; }
+  .col__num--animal { min-height: 2.3rem; font-size: 1.6rem; }
+  .col__icon { width: var(--animal-icon-size); height: var(--animal-icon-size); }
   .progress-track { height: 0.625rem; }
   .ticker { font-size: 1.05rem; height: 2.25rem; line-height: 2.25rem; }
 }
