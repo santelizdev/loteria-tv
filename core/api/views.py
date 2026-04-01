@@ -554,9 +554,12 @@ class DeviceStatusAPIView(APIView):
         client_logo_url = ""
         if device.branch and device.branch.client and device.branch.client.logo:
             try:
-                client_logo_url = request.build_absolute_uri(device.branch.client.logo.url)
+                client_logo_url = device.branch.client.logo.url
             except Exception:
-                client_logo_url = ""
+                try:
+                    client_logo_url = request.build_absolute_uri(device.branch.client.logo.url)
+                except Exception:
+                    client_logo_url = ""
 
         return _apply_no_cache_headers(
             Response(

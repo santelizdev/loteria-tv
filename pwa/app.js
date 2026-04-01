@@ -12,7 +12,7 @@ var ANIMALITOS_INTERVAL_MS = 40000;
 var CRUZ_DAILY_REFRESH_MS  = 10 * 60 * 1000;
 var NETWORK_TIMEOUT_MS     = 15000;
 var GROUPED_SLOT_TOLERANCE_MINUTES = 15;
-var TRIPLES_GROUP_SIZE     = 4;
+var TRIPLES_GROUP_SIZE     = 3;
 var ANIMALITOS_GROUP_SIZE  = 3;
 var CACHE_PREFIX           = "loteriatv-cache-" + getAppVersion() + ":";
 
@@ -153,19 +153,60 @@ function startClock() {
 function setClientLogo(url) {
   var img = document.getElementById("clientLogo");
   if (!img) return;
-  var isAbsolute = typeof url === "string" && /^https?:\/\//i.test(url);
-  if (!isAbsolute) {
+  var normalizedUrl = normalizeClientLogoUrl(url);
+  if (!normalizedUrl) {
     img.removeAttribute("src");
     img.style.display = "none";
     state.clientLogoUrl = "";
     console.log("Logo oculto. URL invalida:", url);
     return;
   }
-  img.onerror = function () { console.log("Logo ERROR:", url); };
-  img.onload  = function () { console.log("Logo OK:", url); };
-  img.src     = url;
+  img.onerror = function () {
+    var fallbackUrl = toSameOriginMediaUrl(normalizedUrl);
+    if (fallbackUrl && fallbackUrl !== img.src) {
+      img.src = fallbackUrl;
+      return;
+    }
+    console.log("Logo ERROR:", normalizedUrl);
+  };
+  img.onload  = function () { console.log("Logo OK:", normalizedUrl); };
+  img.src     = normalizedUrl;
   img.style.display = "block";
-  state.clientLogoUrl = url;
+  state.clientLogoUrl = normalizedUrl;
+}
+
+function parseUrlWithAnchor(raw) {
+  if (!raw) return null;
+  var anchor = document.createElement("a");
+  anchor.href = String(raw || "");
+  return anchor;
+}
+
+function toSameOriginMediaUrl(raw) {
+  var parsed = parseUrlWithAnchor(raw);
+  if (!parsed) return "";
+  var path = String(parsed.pathname || "");
+  if (path.indexOf("/media/") !== 0) return "";
+  return window.location.origin + path + String(parsed.search || "");
+}
+
+function normalizeClientLogoUrl(raw) {
+  var value = String(raw || "").trim();
+  if (!value) return "";
+
+  if (value.indexOf("/media/") === 0) {
+    return window.location.origin + value;
+  }
+
+  if (/^https?:\/\//i.test(value)) {
+    return toSameOriginMediaUrl(value) || value;
+  }
+
+  if (value.indexOf("//") === 0) {
+    return toSameOriginMediaUrl(window.location.protocol + value) || (window.location.protocol + value);
+  }
+
+  return "";
 }
 
 // ---------- STATE ----------
