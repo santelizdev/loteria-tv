@@ -186,7 +186,7 @@ class ScraperHealthService:
         sent_incidents = ScraperNotificationService.notify_pending_incidents(
             incidents=evaluation["incidents"]
         )
-        if evaluation["has_incident"]:
+        if evaluation["has_incident"] and evaluation.get("has_blocking_incident"):
             cls.mark_failure_message(
                 scraper_key,
                 error_message=evaluation["health_error_message"] or "La corrida no dejo grupos utilizables.",

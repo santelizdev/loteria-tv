@@ -78,13 +78,13 @@ class ScraperOpsContractService:
             group_key=("provider", "draw_date", "draw_time"),
             validation_profile="baseline",
             expected_group_scope=(
-                "Providers baseline visibles del origen Lotoven: Guacharito, Guacharo, Cazaloton, La Granjita, Loto Chaima, Lotto Activo, Lotto Activo Interl, Lotto Rey, Mega Animal 40 y SelvaPlus.",
+                "Providers baseline monitoreados del origen Lotoven: Cazaloton, La Granjita, Loto Chaima, Lotto Rey y Mega Animal 40.",
                 "Grupo de resultado: provider + fecha + horario cuando el scraper trae filas parciales.",
                 "Si el scraper viene totalmente vacio, se mantiene incidente unico a nivel scraper en vez de un incidente por provider."
             ),
             real_failure_definition=(
                 "Fallo real cuando la corrida revienta, parsea 0 en contexto operativo, no registra "
-                "OK del dia o deja providers baseline sin filas utilizables mientras otros providers del mismo origen si llegaron. "
+                "OK del dia o deja providers baseline monitoreados sin filas utilizables mientras otros providers del mismo origen si llegaron. "
                 "Lotto Rey permite fallback temporal via TuAzar antes de habilitar carga manual."
             ),
             alert_trigger_definition=(

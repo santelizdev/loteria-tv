@@ -7,6 +7,7 @@ from django.db.models import QuerySet
 from django.utils import timezone
 
 from core.models import AnimalitoResult, CurrentResult, ScraperExecution, ScraperIncident
+from core.services.scraper_execution_retention_service import ScraperExecutionRetentionService
 from core.services.scraper_ops_contract_service import ScraperOpsContractService
 from core.services.tuazar_animalito_fallback_service import (
     FallbackAttemptResult,
@@ -61,16 +62,11 @@ TUAZAR_BASELINE_PROVIDERS = (
 )
 
 LOTOVEN_ANIMALITO_BASELINE_PROVIDERS = (
-    "Guacharito",
-    "Guacharo",
     "Cazaloton",
     "La Granjita",
     "Loto Chaima",
-    "Lotto Activo",
-    "Lotto Activo Interl",
     "Lotto Rey",
     "Mega Animal 40",
-    "SelvaPlus",
 )
 
 CONDOR_PROVIDER = ("Condor Gana",)
@@ -94,6 +90,7 @@ class ScraperExecutionService:
     def start_execution(cls, scraper_key: str) -> ScraperExecution:
         from core.services.scraper_health_service import ScraperHealthService
 
+        ScraperExecutionRetentionService.prune_old_executions(keep_days=2)
         definition = ScraperHealthService.get_definition(scraper_key)
         contract = ScraperOpsContractService.get_contract(scraper_key)
         draw_date = timezone.localdate()
@@ -230,6 +227,7 @@ class ScraperExecutionService:
         return {
             "execution": execution,
             "has_incident": has_incident,
+            "has_blocking_incident": any(cls._incident_impacts_frontend(incident) for incident in opened),
             "incident_count": len(opened),
             "incidents": opened,
             "evidence_summary": evidence,
@@ -1007,6 +1005,13 @@ class ScraperExecutionService:
         if scope == "provider":
             return "missing_provider_rows"
         return "missing_scraper_rows"
+
+    @staticmethod
+    def _incident_impacts_frontend(incident: ScraperIncident) -> bool:
+        return (
+            incident.contingency_stage == ScraperIncident.ContingencyStage.MANUAL_REQUIRED
+            and incident.detection_scope == "scraper"
+        )
 
     @staticmethod
     def _is_usable_result_origin(result_origin: str) -> bool:

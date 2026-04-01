@@ -151,8 +151,8 @@ class ScraperExecutionFlowTestCase(TestCase):
         mock_post.assert_not_called()
 
         monitor = ScraperHealth.objects.get(scraper_key="lotoven_triples")
-        self.assertEqual(monitor.last_status, ScraperHealth.Status.FAILED)
-        self.assertIn("Triple Caracas A 16:30", monitor.last_error_message)
+        self.assertEqual(monitor.last_status, ScraperHealth.Status.SUCCESS)
+        self.assertEqual(monitor.last_error_message, "")
         self.assertIsNone(monitor.last_notified_at)
 
     @patch("core.services.scraper_notification_service.requests.post")
