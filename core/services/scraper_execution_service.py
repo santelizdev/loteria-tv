@@ -516,11 +516,19 @@ class ScraperExecutionService:
         now,
     ) -> None:
         stage = incident.contingency_stage or ScraperIncident.ContingencyStage.OBSERVING
+        auto_manual_allowed = cls._can_auto_trigger_manual(incident)
+        fallback_scraper_key = cls._get_fallback_scraper_key(incident)
+
+        if (
+            stage == ScraperIncident.ContingencyStage.MANUAL_REQUIRED
+            and not auto_manual_allowed
+        ):
+            cls._reset_incident_to_observing(incident=incident)
+            stage = ScraperIncident.ContingencyStage.OBSERVING
 
         if stage == ScraperIncident.ContingencyStage.OBSERVING:
             if incident.primary_attempt_count < PRIMARY_ATTEMPT_THRESHOLD:
                 return
-            fallback_scraper_key = cls._get_fallback_scraper_key(incident)
             if fallback_scraper_key:
                 incident.contingency_stage = ScraperIncident.ContingencyStage.FALLBACK_ACTIVE
                 incident.fallback_scraper_key = fallback_scraper_key
@@ -537,6 +545,8 @@ class ScraperExecutionService:
                     ]
                 )
                 cls._run_fallback_attempt(incident=incident, execution=execution, now=now)
+                return
+            if not auto_manual_allowed:
                 return
             cls._mark_incident_manual_required(incident=incident, now=now)
             return
@@ -596,6 +606,8 @@ class ScraperExecutionService:
                     "updated_at",
                 ]
             )
+            if not cls._can_auto_trigger_manual(incident):
+                return
             cls._mark_incident_manual_required(incident=incident, now=now)
             return
 
@@ -637,6 +649,25 @@ class ScraperExecutionService:
     def _reset_alert_state(incident: ScraperIncident) -> None:
         incident.alert_sent = False
         incident.alert_sent_at = None
+
+    @classmethod
+    def _reset_incident_to_observing(cls, *, incident: ScraperIncident) -> None:
+        incident.contingency_stage = ScraperIncident.ContingencyStage.OBSERVING
+        incident.manual_enabled_at = None
+        cls._reset_alert_state(incident)
+        incident.save(
+            update_fields=[
+                "contingency_stage",
+                "manual_enabled_at",
+                "alert_sent",
+                "alert_sent_at",
+                "updated_at",
+            ]
+        )
+
+    @staticmethod
+    def _can_auto_trigger_manual(incident: ScraperIncident) -> bool:
+        return incident.detection_scope == "scraper"
 
     @classmethod
     def _retire_obsolete_open_incidents(

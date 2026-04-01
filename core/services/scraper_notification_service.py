@@ -249,10 +249,10 @@ class ScraperNotificationService:
         del now
         if incident.failure_reason_code == "command_failed":
             return True
-        return incident.contingency_stage in {
-            ScraperIncident.ContingencyStage.FALLBACK_ACTIVE,
-            ScraperIncident.ContingencyStage.MANUAL_REQUIRED,
-        }
+        return (
+            incident.contingency_stage == ScraperIncident.ContingencyStage.MANUAL_REQUIRED
+            and incident.detection_scope == "scraper"
+        )
 
     @classmethod
     def _dispatch_message(cls, message: str) -> None:

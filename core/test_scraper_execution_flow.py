@@ -309,7 +309,7 @@ class ScraperExecutionFlowTestCase(TestCase):
         SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
     )
     @patch("core.services.scraper_notification_service.requests.post")
-    def test_notify_pending_incidents_only_sends_when_manual_required(self, mock_post):
+    def test_notify_pending_incidents_ignores_group_manual_required(self, mock_post):
         incident = ScraperIncident.objects.create(
             fingerprint="lotoven_triples|2026-03-23|group|Triple Caracas A|16:30|missing_expected_group",
             scraper_key="lotoven_triples",
@@ -346,6 +346,46 @@ class ScraperExecutionFlowTestCase(TestCase):
         incident.manual_enabled_at = self.fixed_now
         incident.save(update_fields=["contingency_stage", "manual_enabled_at", "updated_at"])
 
+        sent = ScraperNotificationService.notify_pending_incidents(
+            incidents=[incident],
+            now=self.fixed_now,
+        )
+
+        self.assertEqual(sent, 0)
+        incident.refresh_from_db()
+        self.assertFalse(incident.alert_sent)
+        mock_post.assert_not_called()
+
+    @override_settings(
+        SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
+        SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
+    )
+    @patch("core.services.scraper_notification_service.requests.post")
+    def test_notify_pending_incidents_sends_only_for_scraper_manual_required(self, mock_post):
+        incident = ScraperIncident.objects.create(
+            fingerprint="lotoven_animalitos|2026-03-23|scraper|-|-|missing_scraper_rows",
+            scraper_key="lotoven_animalitos",
+            label="Animalitos Lotoven",
+            command_name="scrape_lotoven_animalitos",
+            draw_date=self.draw_date,
+            provider_name="",
+            draw_time=None,
+            result_model="AnimalitoResult",
+            detection_scope="scraper",
+            validation_profile="baseline",
+            status=ScraperIncident.Status.OPEN,
+            failure_reason_code="missing_scraper_rows",
+            summary="No hay filas utilizables.",
+            evidence_summary="test",
+            contingency_stage=ScraperIncident.ContingencyStage.MANUAL_REQUIRED,
+            manual_enabled_at=self.fixed_now,
+            occurrence_count=3,
+            primary_attempt_count=PRIMARY_ATTEMPT_THRESHOLD,
+            first_detected_at=self.fixed_now - timedelta(minutes=25),
+            last_detected_at=self.fixed_now,
+        )
+
+        incident.contingency_stage = ScraperIncident.ContingencyStage.MANUAL_REQUIRED
         sent = ScraperNotificationService.notify_pending_incidents(
             incidents=[incident],
             now=self.fixed_now,
@@ -464,11 +504,11 @@ class ScraperExecutionFlowTestCase(TestCase):
             provider_name="Triple Caracas A",
             failure_reason_code="missing_expected_group",
         )
-        self.assertEqual(incident.contingency_stage, ScraperIncident.ContingencyStage.MANUAL_REQUIRED)
+        self.assertEqual(incident.contingency_stage, ScraperIncident.ContingencyStage.OBSERVING)
         self.assertEqual(incident.primary_attempt_count, PRIMARY_ATTEMPT_THRESHOLD)
-        self.assertIsNotNone(incident.manual_enabled_at)
-        self.assertTrue(incident.alert_sent)
-        self.assertEqual(mock_post.call_count, 1)
+        self.assertIsNone(incident.manual_enabled_at)
+        self.assertFalse(incident.alert_sent)
+        self.assertEqual(mock_post.call_count, 0)
 
     @override_settings(
         SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
@@ -512,9 +552,9 @@ class ScraperExecutionFlowTestCase(TestCase):
         self.assertEqual(incident.fallback_attempt_count, 0)
         self.assertEqual(incident.fallback_scraper_key, TuAzarAnimalitoFallbackService.SCRAPER_KEY)
         self.assertIsNotNone(incident.fallback_activated_at)
-        self.assertTrue(incident.alert_sent)
+        self.assertFalse(incident.alert_sent)
         self.assertEqual(mock_run_fallback.call_count, 1)
-        self.assertEqual(mock_post.call_count, 1)
+        self.assertEqual(mock_post.call_count, 0)
 
     @override_settings(
         SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
@@ -554,10 +594,10 @@ class ScraperExecutionFlowTestCase(TestCase):
             provider_name="Lotto Rey",
             failure_reason_code="missing_provider_rows",
         )
-        self.assertEqual(incident.contingency_stage, ScraperIncident.ContingencyStage.MANUAL_REQUIRED)
+        self.assertEqual(incident.contingency_stage, ScraperIncident.ContingencyStage.FALLBACK_ACTIVE)
         self.assertEqual(incident.primary_attempt_count, PRIMARY_ATTEMPT_THRESHOLD)
         self.assertEqual(incident.fallback_attempt_count, FALLBACK_ATTEMPT_THRESHOLD)
-        self.assertIsNotNone(incident.manual_enabled_at)
-        self.assertTrue(incident.alert_sent)
+        self.assertIsNone(incident.manual_enabled_at)
+        self.assertFalse(incident.alert_sent)
         self.assertEqual(mock_run_fallback.call_count, FALLBACK_ATTEMPT_THRESHOLD)
-        self.assertEqual(mock_post.call_count, 2)
+        self.assertEqual(mock_post.call_count, 0)
