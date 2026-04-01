@@ -56,12 +56,14 @@ class AnimalitoProviderCatalogTestCase(TestCase):
     def test_canonical_name_maps_known_aliases(self):
         self.assertEqual(canonical_animalito_provider_name("Mega Animal"), "Mega Animal 40")
         self.assertEqual(canonical_animalito_provider_name("Mega Animal 40"), "Mega Animal 40")
+        self.assertEqual(canonical_animalito_provider_name("Loto Rey"), "Lotto Rey")
         self.assertEqual(canonical_animalito_provider_name("El Guácharo"), "Guacharo")
         self.assertEqual(canonical_animalito_provider_name("Condor Gana"), "Condor Gana")
 
     def test_visible_provider_check_accepts_catalog_aliases(self):
         self.assertTrue(is_visible_animalito_provider("Mega Animal"))
         self.assertTrue(is_visible_animalito_provider("Mega Animal 40"))
+        self.assertTrue(is_visible_animalito_provider("Loto Rey"))
         self.assertTrue(is_visible_animalito_provider("El Guacharito"))
         self.assertTrue(is_visible_animalito_provider("Condor Gana"))
 

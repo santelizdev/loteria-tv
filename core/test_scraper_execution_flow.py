@@ -9,6 +9,7 @@ from django.utils import timezone
 from core.models import CurrentResult, Provider, ScraperExecution, ScraperHealth, ScraperIncident
 from core.services.scraper_execution_service import (
     BASELINE_PROVIDER_START_TIMES,
+    LOTOVEN_ANIMALITO_BASELINE_PROVIDERS,
     LOTOVEN_STRICT_SCHEDULE,
     LOTOVEN_TABLE_SIMPLE_PROVIDERS,
     SCRAPER_SCOPE_START_TIMES,
@@ -251,6 +252,33 @@ class ScraperExecutionFlowTestCase(TestCase):
 
         self.assertEqual(groups, [])
 
+    def test_due_expected_groups_includes_lotoven_animalito_baseline_providers_after_start(self):
+        start_time = SCRAPER_SCOPE_START_TIMES["lotoven_animalitos"]
+        start_hour, start_minute = [int(value) for value in start_time.split(":")]
+        now = timezone.make_aware(
+            datetime(2026, 3, 23, start_hour, start_minute + 1, 0),
+            timezone.get_current_timezone(),
+        )
+
+        groups = ScraperExecutionService._get_due_expected_groups(
+            "lotoven_animalitos",
+            self.draw_date,
+            now=now,
+        )
+
+        self.assertIn(
+            {"provider_name": "Lotto Rey", "draw_time": "", "scope": "provider"},
+            groups,
+        )
+        self.assertIn(
+            {"provider_name": "Mega Animal 40", "draw_time": "", "scope": "provider"},
+            groups,
+        )
+        self.assertEqual(
+            len([group for group in groups if group["scope"] == "provider"]),
+            len(LOTOVEN_ANIMALITO_BASELINE_PROVIDERS),
+        )
+
     @override_settings(
         SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
         SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
@@ -340,3 +368,47 @@ class ScraperExecutionFlowTestCase(TestCase):
         self.assertEqual(obsolete_incident.status, ScraperIncident.Status.RESOLVED)
         self.assertIn("contrato operativo", obsolete_incident.resolution_note)
         mock_post.assert_not_called()
+
+    def test_lotoven_animalitos_without_rows_keeps_single_scraper_incident(self):
+        expected_groups = [
+            {"provider_name": "Lotto Rey", "draw_time": "", "scope": "provider"},
+            {"provider_name": "Mega Animal 40", "draw_time": "", "scope": "provider"},
+        ]
+
+        candidates = ScraperExecutionService._build_incident_candidates(
+            scraper_key="lotoven_animalitos",
+            draw_date=self.draw_date,
+            expected_groups=expected_groups,
+            persisted_groups=[],
+            missing_groups=expected_groups,
+            now=self.fixed_now,
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].failure_reason_code, "missing_scraper_rows")
+
+    def test_lotoven_animalitos_partial_rows_open_missing_provider_incidents(self):
+        expected_groups = [
+            {"provider_name": "Lotto Rey", "draw_time": "", "scope": "provider"},
+            {"provider_name": "Mega Animal 40", "draw_time": "", "scope": "provider"},
+        ]
+        persisted_groups = [
+            {"provider_name": "Lotto Rey", "draw_time": "", "scope": "provider"},
+            {"provider_name": "", "draw_time": "", "scope": "scraper"},
+        ]
+        missing_groups = [
+            {"provider_name": "Mega Animal 40", "draw_time": "", "scope": "provider"},
+        ]
+
+        candidates = ScraperExecutionService._build_incident_candidates(
+            scraper_key="lotoven_animalitos",
+            draw_date=self.draw_date,
+            expected_groups=expected_groups,
+            persisted_groups=persisted_groups,
+            missing_groups=missing_groups,
+            now=self.fixed_now,
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].failure_reason_code, "missing_provider_rows")
+        self.assertEqual(candidates[0].provider_name, "Mega Animal 40")

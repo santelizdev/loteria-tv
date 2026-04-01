@@ -68,6 +68,7 @@ ANIMALITO_PROVIDER_ALIASES = {
     "lottoactivo": "Lotto Activo",
     "lottoactivointerl": "Lotto Activo Interl",
     "lottoactivointernacional": "Lotto Activo Interl",
+    "lotorey": "Lotto Rey",
     "lottorey": "Lotto Rey",
     "megaanimal": "Mega Animal 40",
     "megaanimal40": "Mega Animal 40",

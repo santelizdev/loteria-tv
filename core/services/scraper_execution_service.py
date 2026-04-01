@@ -14,6 +14,7 @@ STRICT_GROUP_TIME_TOLERANCE_MINUTES = 15
 BASELINE_PROVIDER_START_TIMES = {
     "lotoven_triples": "08:15",
     "tuazar_triples": "09:15",
+    "lotoven_animalitos": "08:15",
 }
 SCRAPER_SCOPE_START_TIMES = {
     "lotoven_animalitos": "08:15",
@@ -51,6 +52,19 @@ TUAZAR_BASELINE_PROVIDERS = (
     "Chance Astral",
     "Triple Gana",
     "Super Gana",
+)
+
+LOTOVEN_ANIMALITO_BASELINE_PROVIDERS = (
+    "Guacharito",
+    "Guacharo",
+    "Cazaloton",
+    "La Granjita",
+    "Loto Chaima",
+    "Lotto Activo",
+    "Lotto Activo Interl",
+    "Lotto Rey",
+    "Mega Animal 40",
+    "SelvaPlus",
 )
 
 CONDOR_PROVIDER = ("Condor Gana",)
@@ -283,6 +297,36 @@ class ScraperExecutionService:
 
         candidates: list[IncidentCandidate] = []
 
+        if not persisted_groups and cls._supports_scraper_scope(scraper_key):
+            reason = "missing_scraper_rows"
+            evidence = cls._build_evidence_summary(
+                scraper_key=scraper_key,
+                expected_groups=expected_groups,
+                persisted_groups=persisted_groups,
+                missing_groups=[{"provider_name": "", "draw_time": "", "scope": "scraper"}],
+            )
+            return [
+                IncidentCandidate(
+                    fingerprint=cls._build_fingerprint(
+                        scraper_key,
+                        draw_date,
+                        "scraper",
+                        provider_name="",
+                        draw_time_str="",
+                        failure_reason_code=reason,
+                    ),
+                    provider_name="",
+                    draw_time_value=None,
+                    detection_scope="scraper",
+                    result_model=result_model,
+                    failure_reason_code=reason,
+                    summary=(
+                        f"{definition.label}: no hay grupos persistidos hoy en {result_model}."
+                    ),
+                    evidence_summary=evidence,
+                )
+            ]
+
         for missing in missing_groups:
             provider_name = missing["provider_name"]
             draw_time_str = missing["draw_time"]
@@ -329,43 +373,7 @@ class ScraperExecutionService:
                 )
             )
 
-        if candidates:
-            return candidates
-
-        if persisted_groups:
-            return []
-
-        if cls._supports_scraper_scope(scraper_key):
-            reason = "missing_scraper_rows"
-            evidence = cls._build_evidence_summary(
-                scraper_key=scraper_key,
-                expected_groups=expected_groups,
-                persisted_groups=persisted_groups,
-                missing_groups=[{"provider_name": "", "draw_time": "", "scope": "scraper"}],
-            )
-            return [
-                IncidentCandidate(
-                    fingerprint=cls._build_fingerprint(
-                        scraper_key,
-                        draw_date,
-                        "scraper",
-                        provider_name="",
-                        draw_time_str="",
-                        failure_reason_code=reason,
-                    ),
-                    provider_name="",
-                    draw_time_value=None,
-                    detection_scope="scraper",
-                    result_model=result_model,
-                    failure_reason_code=reason,
-                    summary=(
-                        f"{definition.label}: no hay grupos persistidos hoy en {result_model}."
-                    ),
-                    evidence_summary=evidence,
-                )
-            ]
-
-        return []
+        return candidates
 
     @classmethod
     def _open_or_refresh_incident(
@@ -691,6 +699,8 @@ class ScraperExecutionService:
             return LOTOVEN_TABLE_SIMPLE_PROVIDERS
         if scraper_key == "tuazar_triples":
             return TUAZAR_BASELINE_PROVIDERS
+        if scraper_key == "lotoven_animalitos":
+            return LOTOVEN_ANIMALITO_BASELINE_PROVIDERS
         if scraper_key == "condor_animalitos":
             return CONDOR_PROVIDER
         return ()

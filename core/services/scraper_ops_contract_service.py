@@ -77,13 +77,13 @@ class ScraperOpsContractService:
             group_key=("provider", "draw_date", "draw_time"),
             validation_profile="baseline",
             expected_group_scope=(
-                "Providers dinamicos detectados desde tarjetas del origen Lotoven.",
-                "Grupo de resultado: provider + fecha + horario.",
-                "No existe aun una parrilla horaria cerrada y versionada por provider."
+                "Providers baseline visibles del origen Lotoven: Guacharito, Guacharo, Cazaloton, La Granjita, Loto Chaima, Lotto Activo, Lotto Activo Interl, Lotto Rey, Mega Animal 40 y SelvaPlus.",
+                "Grupo de resultado: provider + fecha + horario cuando el scraper trae filas parciales.",
+                "Si el scraper viene totalmente vacio, se mantiene incidente unico a nivel scraper en vez de un incidente por provider."
             ),
             real_failure_definition=(
-                "Fallo real cuando la corrida revienta, parsea 0 en contexto operativo o no registra "
-                "OK del dia. La cobertura exacta por provider/horario queda pendiente."
+                "Fallo real cuando la corrida revienta, parsea 0 en contexto operativo, no registra "
+                "OK del dia o deja providers baseline sin filas utilizables mientras otros providers del mismo origen si llegaron."
             ),
             alert_trigger_definition=(
                 "Crear alerta operativa cuando el monitor detecta failed_today, missing_today o stale."
