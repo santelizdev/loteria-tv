@@ -1,19 +1,22 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from core.models import CurrentResult, Provider, ScraperExecution, ScraperHealth, ScraperIncident
 from core.services.scraper_execution_service import (
+    BASELINE_PROVIDER_START_TIMES,
     LOTOVEN_STRICT_SCHEDULE,
     LOTOVEN_TABLE_SIMPLE_PROVIDERS,
+    SCRAPER_SCOPE_START_TIMES,
     ScraperExecutionService,
     STRICT_EXPECTED_GROUP_GRACE_MINUTES,
 )
 from core.services.scraper_health_service import ScraperHealthService
+from core.services.scraper_notification_service import ScraperNotificationService
 
 
 class ScraperExecutionFlowTestCase(TestCase):
@@ -118,13 +121,13 @@ class ScraperExecutionFlowTestCase(TestCase):
         )
         self.assertEqual(incident.status, ScraperIncident.Status.OPEN)
         self.assertEqual(incident.draw_time.strftime("%H:%M"), "16:30")
-        self.assertTrue(incident.alert_sent)
-        mock_post.assert_called_once()
+        self.assertFalse(incident.alert_sent)
+        mock_post.assert_not_called()
 
         monitor = ScraperHealth.objects.get(scraper_key="lotoven_triples")
         self.assertEqual(monitor.last_status, ScraperHealth.Status.FAILED)
         self.assertIn("Triple Caracas A 16:30", monitor.last_error_message)
-        self.assertIsNotNone(monitor.last_notified_at)
+        self.assertIsNone(monitor.last_notified_at)
 
     @patch("core.services.scraper_notification_service.requests.post")
     @patch("core.services.scraper_health_service.call_command")
@@ -163,7 +166,7 @@ class ScraperExecutionFlowTestCase(TestCase):
         )
         self.assertEqual(incident.status, ScraperIncident.Status.RESOLVED)
         self.assertIsNotNone(incident.resolved_at)
-        self.assertEqual(mock_post.call_count, 1)
+        self.assertEqual(mock_post.call_count, 0)
 
         monitor = ScraperHealth.objects.get(scraper_key="lotoven_triples")
         self.assertEqual(monitor.last_status, ScraperHealth.Status.SUCCESS)
@@ -196,3 +199,144 @@ class ScraperExecutionFlowTestCase(TestCase):
             {"provider_name": "Triple Caracas A", "draw_time": "16:30", "scope": "group"},
             groups,
         )
+
+    def test_due_expected_groups_waits_for_lotoven_baseline_start(self):
+        start_time = BASELINE_PROVIDER_START_TIMES["lotoven_triples"]
+        start_hour, start_minute = [int(value) for value in start_time.split(":")]
+        now = timezone.make_aware(
+            datetime(2026, 3, 23, start_hour, start_minute - 1, 0),
+            timezone.get_current_timezone(),
+        )
+
+        groups = ScraperExecutionService._get_due_expected_groups(
+            "lotoven_triples",
+            self.draw_date,
+            now=now,
+        )
+
+        self.assertNotIn(
+            {"provider_name": "Triple Centena", "draw_time": "", "scope": "provider"},
+            groups,
+        )
+
+    def test_due_expected_groups_waits_for_tuazar_baseline_start(self):
+        start_time = BASELINE_PROVIDER_START_TIMES["tuazar_triples"]
+        start_hour, start_minute = [int(value) for value in start_time.split(":")]
+        now = timezone.make_aware(
+            datetime(2026, 3, 23, start_hour, start_minute - 1, 0),
+            timezone.get_current_timezone(),
+        )
+
+        groups = ScraperExecutionService._get_due_expected_groups(
+            "tuazar_triples",
+            self.draw_date,
+            now=now,
+        )
+
+        self.assertEqual(groups, [])
+
+    def test_due_expected_groups_waits_for_lotoven_animalitos_scraper_start(self):
+        start_time = SCRAPER_SCOPE_START_TIMES["lotoven_animalitos"]
+        start_hour, start_minute = [int(value) for value in start_time.split(":")]
+        now = timezone.make_aware(
+            datetime(2026, 3, 23, start_hour, start_minute - 1, 0),
+            timezone.get_current_timezone(),
+        )
+
+        groups = ScraperExecutionService._get_due_expected_groups(
+            "lotoven_animalitos",
+            self.draw_date,
+            now=now,
+        )
+
+        self.assertEqual(groups, [])
+
+    @override_settings(
+        SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
+        SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
+    )
+    @patch("core.services.scraper_notification_service.requests.post")
+    def test_notify_pending_incidents_waits_for_persistent_missing_group(self, mock_post):
+        incident = ScraperIncident.objects.create(
+            fingerprint="lotoven_triples|2026-03-23|group|Triple Caracas A|16:30|missing_expected_group",
+            scraper_key="lotoven_triples",
+            label="Triples Lotoven",
+            command_name="scrape_lotoven_tables",
+            draw_date=self.draw_date,
+            provider_name="Triple Caracas A",
+            draw_time=datetime.strptime("16:30", "%H:%M").time(),
+            result_model="CurrentResult",
+            detection_scope="group",
+            validation_profile="strict_schedule",
+            status=ScraperIncident.Status.OPEN,
+            failure_reason_code="missing_expected_group",
+            summary="Falta el grupo esperado.",
+            evidence_summary="test",
+            occurrence_count=2,
+            first_detected_at=self.fixed_now - timedelta(minutes=10),
+            last_detected_at=self.fixed_now,
+        )
+
+        sent = ScraperNotificationService.notify_pending_incidents(
+            incidents=[incident],
+            now=self.fixed_now,
+        )
+
+        self.assertEqual(sent, 0)
+        incident.refresh_from_db()
+        self.assertFalse(incident.alert_sent)
+        mock_post.assert_not_called()
+
+        incident.occurrence_count = 3
+        incident.first_detected_at = self.fixed_now - timedelta(minutes=25)
+        incident.save(update_fields=["occurrence_count", "first_detected_at", "updated_at"])
+
+        sent = ScraperNotificationService.notify_pending_incidents(
+            incidents=[incident],
+            now=self.fixed_now,
+        )
+
+        self.assertEqual(sent, 1)
+        incident.refresh_from_db()
+        self.assertTrue(incident.alert_sent)
+        self.assertIsNotNone(incident.alert_sent_at)
+        mock_post.assert_called_once()
+
+    @patch("core.services.scraper_notification_service.requests.post")
+    @patch("core.services.scraper_health_service.call_command")
+    def test_successful_rerun_retires_obsolete_open_contract_incident(self, mock_call_command, mock_post):
+        obsolete_incident = ScraperIncident.objects.create(
+            fingerprint="lotoven_triples|2026-03-22|group|Triple Caracas A|19:10|missing_expected_group",
+            scraper_key="lotoven_triples",
+            label="Triples Lotoven",
+            command_name="scrape_lotoven_tables",
+            draw_date=self.draw_date,
+            provider_name="Triple Caracas A",
+            draw_time=datetime.strptime("19:10", "%H:%M").time(),
+            result_model="CurrentResult",
+            detection_scope="group",
+            validation_profile="strict_schedule",
+            status=ScraperIncident.Status.OPEN,
+            failure_reason_code="missing_expected_group",
+            summary="Horario viejo aun abierto.",
+            evidence_summary="test",
+        )
+
+        def create_full_rows(_command_name):
+            self._seed_lotoven_results()
+            return None
+
+        mock_call_command.side_effect = create_full_rows
+
+        with patch("core.services.scraper_health_service.timezone.now", return_value=self.fixed_now):
+            with patch("core.services.scraper_execution_service.timezone.now", return_value=self.fixed_now):
+                with patch(
+                    "core.services.scraper_execution_service.timezone.localdate",
+                    return_value=self.draw_date,
+                ):
+                    ScraperHealthService.run_registered("lotoven_triples")
+
+        obsolete_incident.refresh_from_db()
+        self.assertEqual(obsolete_incident.status, ScraperIncident.Status.RESOLVED)
+        self.assertIn("contrato operativo", obsolete_incident.resolution_note)
+        mock_post.assert_not_called()

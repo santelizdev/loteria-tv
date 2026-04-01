@@ -10,6 +10,17 @@ from django.utils import timezone
 from core.models import ScraperHealth, ScraperIncident
 from core.services.scraper_health_service import ScraperHealthService
 
+INCIDENT_NOTIFICATION_POLICY = {
+    ("command_failed", None): {"min_age_minutes": 0, "min_occurrences": 1},
+    ("missing_scraper_rows", "lotoven_animalitos"): {"min_age_minutes": 10, "min_occurrences": 2},
+    ("missing_scraper_rows", None): {"min_age_minutes": 15, "min_occurrences": 2},
+    ("missing_provider_rows", "lotoven_triples"): {"min_age_minutes": 15, "min_occurrences": 3},
+    ("missing_provider_rows", "tuazar_triples"): {"min_age_minutes": 20, "min_occurrences": 3},
+    ("missing_provider_rows", None): {"min_age_minutes": 20, "min_occurrences": 3},
+    ("missing_expected_group", "lotoven_triples"): {"min_age_minutes": 20, "min_occurrences": 3},
+    ("missing_expected_group", None): {"min_age_minutes": 15, "min_occurrences": 2},
+}
+
 
 @dataclass(frozen=True)
 class NotificationDecision:
@@ -91,8 +102,10 @@ class ScraperNotificationService:
         cls,
         *,
         incidents=None,
+        now=None,
         force=False,
     ) -> list[IncidentNotificationDecision]:
+        current_dt = now or timezone.now()
         queryset = cls._normalize_incidents(incidents)
         if not force:
             queryset = [incident for incident in queryset if not incident.alert_sent]
@@ -103,6 +116,7 @@ class ScraperNotificationService:
             )
             for incident in queryset
             if incident.status == ScraperIncident.Status.OPEN
+            and (force or cls._is_incident_ready_for_notification(incident, now=current_dt))
         ]
 
     @classmethod
@@ -111,7 +125,11 @@ class ScraperNotificationService:
             return 0
 
         current_dt = now or timezone.now()
-        decisions = cls.collect_pending_incident_notifications(incidents=incidents, force=force)
+        decisions = cls.collect_pending_incident_notifications(
+            incidents=incidents,
+            now=current_dt,
+            force=force,
+        )
         if not decisions:
             return 0
 
@@ -224,6 +242,28 @@ class ScraperNotificationService:
         provider_name = incident.provider_name or "scraper"
         draw_time = incident.draw_time.strftime("%H:%M") if incident.draw_time else "-"
         return f"{provider_name} @ {draw_time}"
+
+    @classmethod
+    def _get_incident_notification_policy(cls, incident: ScraperIncident) -> dict:
+        return INCIDENT_NOTIFICATION_POLICY.get(
+            (incident.failure_reason_code, incident.scraper_key),
+            INCIDENT_NOTIFICATION_POLICY.get(
+                (incident.failure_reason_code, None),
+                {"min_age_minutes": 10, "min_occurrences": 2},
+            ),
+        )
+
+    @classmethod
+    def _is_incident_ready_for_notification(cls, incident: ScraperIncident, *, now) -> bool:
+        policy = cls._get_incident_notification_policy(incident)
+        age_minutes = max(
+            0.0,
+            (now - (incident.first_detected_at or now)).total_seconds() / 60.0,
+        )
+        return (
+            incident.occurrence_count >= int(policy["min_occurrences"])
+            and age_minutes >= float(policy["min_age_minutes"])
+        )
 
     @classmethod
     def _dispatch_message(cls, message: str) -> None:

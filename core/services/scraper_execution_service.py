@@ -11,6 +11,13 @@ from core.services.scraper_ops_contract_service import ScraperOpsContractService
 
 STRICT_EXPECTED_GROUP_GRACE_MINUTES = 12
 STRICT_GROUP_TIME_TOLERANCE_MINUTES = 15
+BASELINE_PROVIDER_START_TIMES = {
+    "lotoven_triples": "08:15",
+    "tuazar_triples": "09:15",
+}
+SCRAPER_SCOPE_START_TIMES = {
+    "lotoven_animalitos": "08:15",
+}
 
 LOTOVEN_TABLE_SIMPLE_PROVIDERS = (
     "Trio Activo",
@@ -149,6 +156,10 @@ class ScraperExecutionService:
             cls._open_or_refresh_incident(execution=execution, candidate=candidate)
             for candidate in candidates
         ]
+        cls._retire_obsolete_open_incidents(
+            execution=execution,
+            now=now,
+        )
         cls._auto_resolve_recovered_incidents(
             execution=execution,
             expected_groups=expected_groups,
@@ -223,6 +234,8 @@ class ScraperExecutionService:
                     )
 
         for provider_name in cls._get_baseline_providers(scraper_key):
+            if not cls._is_baseline_provider_due(scraper_key, provider_name, current_time=current_time):
+                continue
             groups.append(
                 {
                     "provider_name": provider_name,
@@ -231,7 +244,11 @@ class ScraperExecutionService:
                 }
             )
 
-        if not groups and cls._supports_scraper_scope(scraper_key):
+        if (
+            not groups
+            and cls._supports_scraper_scope(scraper_key)
+            and cls._is_scraper_scope_due(scraper_key, current_time=current_time)
+        ):
             groups.append(
                 {
                     "provider_name": "",
@@ -433,6 +450,70 @@ class ScraperExecutionService:
             ]
         )
         return incident
+
+    @classmethod
+    def _retire_obsolete_open_incidents(
+        cls,
+        *,
+        execution: ScraperExecution,
+        now,
+    ) -> None:
+        open_incidents = ScraperIncident.objects.filter(
+            scraper_key=execution.scraper_key,
+            status=ScraperIncident.Status.OPEN,
+        )
+        if not open_incidents.exists():
+            return
+
+        active_schedule = cls._get_strict_schedule(execution.scraper_key)
+        active_baseline = set(cls._get_baseline_providers(execution.scraper_key))
+        scraper_scope_enabled = cls._supports_scraper_scope(execution.scraper_key)
+
+        for incident in open_incidents:
+            if not cls._incident_contract_is_obsolete(
+                incident,
+                active_schedule=active_schedule,
+                active_baseline=active_baseline,
+                scraper_scope_enabled=scraper_scope_enabled,
+            ):
+                continue
+            incident.status = ScraperIncident.Status.RESOLVED
+            incident.resolved_at = now
+            incident.resolution_note = (
+                "Cerrado automaticamente porque el target ya no forma parte del contrato operativo."
+            )
+            incident.last_execution = execution
+            incident.save(
+                update_fields=[
+                    "status",
+                    "resolved_at",
+                    "resolution_note",
+                    "last_execution",
+                    "updated_at",
+                ]
+            )
+
+    @classmethod
+    def _incident_contract_is_obsolete(
+        cls,
+        incident: ScraperIncident,
+        *,
+        active_schedule: dict[str, tuple[str, ...]],
+        active_baseline: set[str],
+        scraper_scope_enabled: bool,
+    ) -> bool:
+        scope = incident.detection_scope or ""
+        if scope == "group":
+            if incident.provider_name not in active_schedule:
+                return True
+            if not incident.draw_time:
+                return True
+            return incident.draw_time.strftime("%H:%M") not in active_schedule[incident.provider_name]
+        if scope == "provider":
+            return incident.provider_name not in active_baseline
+        if scope == "scraper":
+            return not scraper_scope_enabled
+        return False
 
     @classmethod
     def _auto_resolve_recovered_incidents(
@@ -657,6 +738,21 @@ class ScraperExecutionService:
         if scraper_key == "lotoven_triples":
             return STRICT_GROUP_TIME_TOLERANCE_MINUTES
         return 0
+
+    @classmethod
+    def _is_baseline_provider_due(cls, scraper_key: str, provider_name: str, *, current_time) -> bool:
+        del provider_name
+        start_time_str = BASELINE_PROVIDER_START_TIMES.get(scraper_key)
+        if not start_time_str:
+            return True
+        return current_time >= cls._parse_time(start_time_str)
+
+    @classmethod
+    def _is_scraper_scope_due(cls, scraper_key: str, *, current_time) -> bool:
+        start_time_str = SCRAPER_SCOPE_START_TIMES.get(scraper_key)
+        if not start_time_str:
+            return True
+        return current_time >= cls._parse_time(start_time_str)
 
     @classmethod
     def _matches_nearby_group_time(
