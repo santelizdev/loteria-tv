@@ -52,15 +52,18 @@ LOTOVEN_STRICT_SCHEDULE = {
     "Triple Zulia C": ("12:45", "16:45", "19:05"),
 }
 
-TRIPLE_PROVIDER_SCHEDULE = {
+TUAZAR_TRIPLE_PROVIDER_SCHEDULE = {
     "Chance Astral": _hourly_slots(start_hour=9, end_hour=19),
-    "Trio Activo": _hourly_slots(start_hour=8, end_hour=19),
-    "Triple Facil": _hourly_slots(start_hour=8, end_hour=19),
     "Triple Gana": ("13:00", "16:00", "22:00"),
     "Super Gana": ("13:00", "16:00", "22:00"),
+}
+
+LOTOVEN_TRIPLE_PROVIDER_SCHEDULE = {
+    "Trio Activo": _hourly_slots(start_hour=8, end_hour=19),
+    "Triple Facil": _hourly_slots(start_hour=8, end_hour=19),
     "Triple Centena": _hourly_slots(start_hour=8, end_hour=20),
 }
-TRIPLE_PROVIDER_SCHEDULE.update(LOTOVEN_STRICT_SCHEDULE)
+LOTOVEN_TRIPLE_PROVIDER_SCHEDULE.update(LOTOVEN_STRICT_SCHEDULE)
 
 ANIMALITO_PROVIDER_SCHEDULE = {
     "Guacharito": _hourly_slots(start_hour=8, end_hour=19, minute=30),
@@ -542,6 +545,8 @@ class ScraperExecutionService:
                 return
             if not auto_manual_allowed:
                 return
+            if not cls._incident_is_still_missing(incident=incident, now=now):
+                return
             cls._mark_incident_manual_required(incident=incident, now=now)
             return
 
@@ -905,8 +910,10 @@ class ScraperExecutionService:
 
     @classmethod
     def _get_provider_scope(cls, scraper_key: str) -> list[str]:
-        if scraper_key in {"lotoven_triples", "tuazar_triples"}:
-            return list(TRIPLE_PROVIDER_SCHEDULE.keys())
+        if scraper_key == "lotoven_triples":
+            return list(LOTOVEN_TRIPLE_PROVIDER_SCHEDULE.keys())
+        if scraper_key == "tuazar_triples":
+            return list(TUAZAR_TRIPLE_PROVIDER_SCHEDULE.keys())
         if scraper_key == "condor_animalitos":
             return list(CONDOR_PROVIDER_SCHEDULE.keys())
         return []
@@ -917,8 +924,10 @@ class ScraperExecutionService:
 
     @classmethod
     def _get_strict_schedule(cls, scraper_key: str) -> dict[str, tuple[str, ...]]:
-        if scraper_key in {"lotoven_triples", "tuazar_triples"}:
-            return TRIPLE_PROVIDER_SCHEDULE
+        if scraper_key == "lotoven_triples":
+            return LOTOVEN_TRIPLE_PROVIDER_SCHEDULE
+        if scraper_key == "tuazar_triples":
+            return TUAZAR_TRIPLE_PROVIDER_SCHEDULE
         if scraper_key == "lotoven_animalitos":
             return ANIMALITO_PROVIDER_SCHEDULE
         if scraper_key == "condor_animalitos":
@@ -1030,16 +1039,41 @@ class ScraperExecutionService:
 
     @staticmethod
     def _guess_scraper_key_from_provider(provider_name: str) -> str:
-        if provider_name.startswith("Triple ") or provider_name in {
+        if provider_name in {
             "Chance Astral",
-            "Trio Activo",
-            "Triple Facil",
             "Triple Gana",
             "Super Gana",
+        }:
+            return "tuazar_triples"
+        if provider_name.startswith("Triple ") or provider_name in {
+            "Trio Activo",
+            "Triple Facil",
             "Triple Centena",
         }:
             return "lotoven_triples"
         return ""
+
+    @classmethod
+    def _incident_is_still_missing(cls, *, incident: ScraperIncident, now) -> bool:
+        expected_groups = cls._get_due_expected_groups(
+            incident.scraper_key,
+            incident.draw_date,
+            now=now,
+        )
+        persisted_groups = cls._get_persisted_groups(incident.scraper_key, incident.draw_date)
+        missing_groups = cls._get_missing_groups(expected_groups, persisted_groups)
+        active_fingerprints = {
+            cls._build_fingerprint(
+                incident.scraper_key,
+                incident.draw_date,
+                group["scope"],
+                provider_name=group["provider_name"],
+                draw_time_str=group["draw_time"],
+                failure_reason_code=cls._scope_reason_code(group["scope"]),
+            )
+            for group in missing_groups
+        }
+        return incident.fingerprint in active_fingerprints
 
     @staticmethod
     def _scope_reason_code(scope: str) -> str:

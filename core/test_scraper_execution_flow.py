@@ -12,9 +12,10 @@ from core.services.scraper_execution_service import (
     CONDOR_PROVIDER_SCHEDULE,
     EXPECTED_GROUP_GRACE_MINUTES,
     FALLBACK_ATTEMPT_THRESHOLD,
+    LOTOVEN_TRIPLE_PROVIDER_SCHEDULE,
     PRIMARY_ATTEMPT_THRESHOLD,
     ScraperExecutionService,
-    TRIPLE_PROVIDER_SCHEDULE,
+    TUAZAR_TRIPLE_PROVIDER_SCHEDULE,
 )
 from core.services.scraper_health_service import ScraperHealthService
 from core.services.scraper_notification_service import ScraperNotificationService
@@ -35,7 +36,7 @@ class ScraperExecutionFlowTestCase(TestCase):
         return provider
 
     def _seed_lotoven_results(self, *, missing_group: tuple[str, str] | None = None) -> None:
-        for provider_name, times in TRIPLE_PROVIDER_SCHEDULE.items():
+        for provider_name, times in LOTOVEN_TRIPLE_PROVIDER_SCHEDULE.items():
             provider = self._upsert_provider(provider_name)
             for time_str in times:
                 if missing_group == (provider_name, time_str):
@@ -263,6 +264,38 @@ class ScraperExecutionFlowTestCase(TestCase):
         )
 
         self.assertEqual(groups, [])
+
+    def test_due_expected_groups_for_lotoven_triples_do_not_include_tuazar_providers(self):
+        now = timezone.make_aware(
+            datetime(2026, 3, 23, 14, EXPECTED_GROUP_GRACE_MINUTES + 1, 0),
+            timezone.get_current_timezone(),
+        )
+
+        groups = ScraperExecutionService._get_due_expected_groups(
+            "lotoven_triples",
+            self.draw_date,
+            now=now,
+        )
+
+        self.assertFalse(any(group["provider_name"] == "Chance Astral" for group in groups))
+        self.assertFalse(any(group["provider_name"] == "Triple Gana" for group in groups))
+        self.assertFalse(any(group["provider_name"] == "Super Gana" for group in groups))
+
+    def test_due_expected_groups_for_tuazar_triples_do_not_include_lotoven_providers(self):
+        now = timezone.make_aware(
+            datetime(2026, 3, 23, 14, EXPECTED_GROUP_GRACE_MINUTES + 1, 0),
+            timezone.get_current_timezone(),
+        )
+
+        groups = ScraperExecutionService._get_due_expected_groups(
+            "tuazar_triples",
+            self.draw_date,
+            now=now,
+        )
+
+        self.assertFalse(any(group["provider_name"] == "Triple Zamorano A" for group in groups))
+        self.assertFalse(any(group["provider_name"] == "Triple Zamorano C" for group in groups))
+        self.assertTrue(any(group["provider_name"] == "Chance Astral" for group in groups))
 
     def test_due_expected_groups_waits_for_lotoven_animalitos_first_due_slot(self):
         now = timezone.make_aware(
