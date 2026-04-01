@@ -25,8 +25,7 @@ def scrape_condor_animalitos():
 
 @shared_task
 def archive_daily():
-    call_command("archive_daily_triples")
-    call_command("archive_daily_animalitos")
+    call_command("run_daily_retention")
 
 
 @shared_task

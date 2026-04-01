@@ -1,18 +1,13 @@
 from __future__ import annotations
 
 from datetime import timedelta
+
 from django.core.management.base import BaseCommand
-from django.db import OperationalError
-from django.db import connection, transaction
+from django.db import OperationalError, connection, transaction
 from django.utils import timezone
 
 from core.management.command_helpers import raise_database_connection_help
-from core.models import (
-    CurrentResult,
-    ResultArchive,
-    AnimalitoResult,
-    AnimalitoArchive,
-)
+from core.models import AnimalitoArchive, AnimalitoResult, CurrentResult, ResultArchive
 
 
 class Command(BaseCommand):
@@ -50,7 +45,6 @@ class Command(BaseCommand):
             raise ValueError("--keep-archive-days must be >= 1")
 
         today = timezone.localdate()
-        # archive window: keep [today - keep_archive_days, today - 1]
         archive_start = today - timedelta(days=keep_archive_days)
         archive_end = today - timedelta(days=1)
 
@@ -71,7 +65,6 @@ class Command(BaseCommand):
                     self.stderr.write(self.style.ERROR(message))
                     raise SystemExit(2)
 
-            # Compute what would be deleted
             to_delete = [
                 ("CurrentResult", CurrentResult.objects.exclude(draw_date=today)),
                 ("AnimalitoResult", AnimalitoResult.objects.exclude(draw_date=today)),

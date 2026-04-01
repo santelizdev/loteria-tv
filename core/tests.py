@@ -15,6 +15,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from core.models import (
+    AnimalitoArchive,
     AnimalitoResult,
     Branch,
     Client,
@@ -24,6 +25,7 @@ from core.models import (
     DeviceTelemetryEvent,
     DeviceTelemetrySnapshot,
     Provider,
+    ResultArchive,
     ScraperExecution,
     ScraperHealth,
     Transmission,
@@ -999,6 +1001,66 @@ class DailyRetentionCommandTestCase(TestCase):
                 call("archive_daily_animalitos", date="2026-03-19"),
                 call("enforce_retention", keep_archive_days=1),
             ],
+        )
+
+    @patch("core.tasks.call_command")
+    def test_archive_daily_task_runs_full_retention_flow(self, mock_call_command):
+        from core.tasks import archive_daily
+
+        archive_daily()
+
+        mock_call_command.assert_called_once_with("run_daily_retention")
+
+    def test_enforce_retention_keeps_only_yesterday_in_archive_tables(self):
+        provider = Provider.objects.create(name="Proveedor QA", source_url="https://qa.example")
+        today = timezone.localdate()
+        yesterday = today - timedelta(days=1)
+        two_days_ago = today - timedelta(days=2)
+
+        ResultArchive.objects.create(
+            provider=provider,
+            draw_date=two_days_ago,
+            draw_time=datetime.strptime("10:00", "%H:%M").time(),
+            winning_number="11",
+            image_url="",
+            extra={},
+        )
+        ResultArchive.objects.create(
+            provider=provider,
+            draw_date=yesterday,
+            draw_time=datetime.strptime("11:00", "%H:%M").time(),
+            winning_number="22",
+            image_url="",
+            extra={},
+        )
+        AnimalitoArchive.objects.create(
+            provider=provider,
+            draw_date=two_days_ago,
+            draw_time=datetime.strptime("10:30", "%H:%M").time(),
+            animal_number="11",
+            animal_name="Gallo",
+            animal_image_url="https://qa.example/gallo.jpg",
+            provider_logo_url="",
+        )
+        AnimalitoArchive.objects.create(
+            provider=provider,
+            draw_date=yesterday,
+            draw_time=datetime.strptime("11:30", "%H:%M").time(),
+            animal_number="22",
+            animal_name="Perro",
+            animal_image_url="https://qa.example/perro.jpg",
+            provider_logo_url="",
+        )
+
+        call_command("enforce_retention")
+
+        self.assertEqual(
+            list(ResultArchive.objects.order_by("draw_date").values_list("draw_date", flat=True)),
+            [yesterday],
+        )
+        self.assertEqual(
+            list(AnimalitoArchive.objects.order_by("draw_date").values_list("draw_date", flat=True)),
+            [yesterday],
         )
 
 
