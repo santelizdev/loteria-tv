@@ -29,6 +29,7 @@ from core.services.device_redis_service import DeviceRedisService
 from core.services.device_service import DeviceService
 from core.services.device_telemetry_service import DeviceTelemetryService
 from core.services.provider_catalog_service import (
+    canonical_animalito_provider_name,
     is_visible_animalito_provider,
     visible_triple_provider_names,
 )
@@ -174,7 +175,7 @@ def _serialize_animalito_result(r) -> Dict[str, str]:
         provider_logo_url = r.provider.logo_url or ""
 
     return {
-        "provider": (r.provider.name or "").strip(),
+        "provider": canonical_animalito_provider_name((r.provider.name or "").strip()),
         "time": _format_time_12h(r.draw_time),
         "number": str(r.animal_number),
         "animal": r.animal_name or "",

@@ -37,6 +37,7 @@ from core.models import Provider
 from core.models.animalito_result import AnimalitoResult
 from core.services.provider_catalog_service import (
     VISIBLE_ANIMALITO_PROVIDERS,
+    canonical_animalito_provider_name,
     is_visible_animalito_provider,
 )
 from core.services.device_redis_service import DeviceRedisService
@@ -56,7 +57,8 @@ def normalize_provider_name(raw: str) -> str:
         return ""
     name = raw.replace("\u00a0", " ")
     name = re.sub(r"\s+", " ", name).strip()
-    return PROVIDER_ALIASES.get(name, name)
+    name = PROVIDER_ALIASES.get(name, name)
+    return canonical_animalito_provider_name(name) or name
 
 
 # -----------------------------------------------------------------------------

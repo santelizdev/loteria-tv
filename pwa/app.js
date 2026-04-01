@@ -303,7 +303,9 @@ function normalizeAnimalitos(raw) {
     var r    = list[i];
     var slot = timeToHourSlot(r.time);
     if (!slot) continue;
-    var providerName = String(r.provider !== null && r.provider !== undefined ? r.provider : "").trim();
+    var providerName = normalizeAnimalitosProviderName(
+      String(r.provider !== null && r.provider !== undefined ? r.provider : "").trim()
+    );
     if (!providerName) continue;
     out.push({
       provider: providerName,
@@ -317,6 +319,32 @@ function normalizeAnimalitos(raw) {
     });
   }
   return out;
+}
+
+function normalizeAnimalitosProviderName(name) {
+  var raw = String(name !== null && name !== undefined ? name : "").replace(/\s+/g, " ").trim();
+  if (!raw) return "";
+
+  var normalized = raw.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  var aliases = {
+    guacharito: "Guacharito",
+    elguacharito: "Guacharito",
+    guacharo: "Guacharo",
+    elguacharo: "Guacharo",
+    cazaloton: "Cazaloton",
+    lagranjita: "La Granjita",
+    lotochaima: "Loto Chaima",
+    lottoactivo: "Lotto Activo",
+    lottoactivointerl: "Lotto Activo Interl",
+    lottoactivointernacional: "Lotto Activo Interl",
+    lottorey: "Lotto Rey",
+    megaanimal: "Mega Animal 40",
+    megaanimal40: "Mega Animal 40",
+    condorgana: "Condor Gana",
+    selvaplus: "SelvaPlus"
+  };
+
+  return aliases[normalized] || raw;
 }
 
 function normalizeCruzDailyContent(raw) {
@@ -352,8 +380,9 @@ var ANIMALITOS_PROVIDER_ORDER = {
   "Lotto Activo": 5,
   "Lotto Activo Interl": 6,
   "Lotto Rey": 7,
-  "Mega Animal": 8,
-  "SelvaPlus": 9
+  "Mega Animal 40": 8,
+  "Condor Gana": 9,
+  "SelvaPlus": 10
 };
 
 var TRIPLE_CARD_ORDER = {
@@ -405,10 +434,10 @@ function groupColumnsForProvider(provider) {
 
 function groupedSlotsForProvider(provider) {
   if (provider === "Triple Caracas" || provider === "Triple Caliente") {
-    return ["13:00", "16:30", "19:10"];
+    return provider === "Triple Caliente" ? ["13:00", "16:30", "19:10"] : ["13:00", "16:30"];
   }
   if (provider === "Triple Tachira") {
-    return ["13:15", "16:45", "22:00"];
+    return ["13:15", "16:45"];
   }
   if (provider === "Triple Zamorano") {
     return ["10:00", "12:00", "14:00"];
@@ -722,6 +751,8 @@ function renderTriplesPage() {
     rowsHtml += '<div class="col__num2-head"><div class="col__num2-head-item">HOY</div><div class="col__num2-head-item">AYER</div></div>';
     for (var si = 0; si < rows.length; si++) {
       var rr = rows[si];
+      var todayClass = (rr.today && /[A-Za-z]/.test(rr.today)) ? " col__num--sign" : "";
+      var ydayClass = (rr.yesterday && /[A-Za-z]/.test(rr.yesterday)) ? " col__num--sign" : "";
       var nToday = rr.today ? esc(rr.today) : '<span class="col__empty">\u2026</span>';
       var nYday = rr.yesterday ? esc(rr.yesterday) : '<span class="col__empty">\u2026</span>';
       rowsHtml +=
@@ -729,10 +760,10 @@ function renderTriplesPage() {
           '<div class="col__time">' + esc(slotTo12h(rr.time)) + '</div>' +
           '<div class="col__num2">' +
             '<div class="col__num2-col">' +
-              '<div class="col__num">' + nToday + '</div>' +
+              '<div class="col__num' + todayClass + '">' + nToday + '</div>' +
             '</div>' +
             '<div class="col__num2-col">' +
-              '<div class="col__num">' + nYday + '</div>' +
+              '<div class="col__num' + ydayClass + '">' + nYday + '</div>' +
             '</div>' +
           '</div>' +
         '</div>';
@@ -889,13 +920,7 @@ function renderDailySidebar() {
   if (!dailySidebarEl) return;
 
   var cards = state.cruzDailyCards || [];
-  var title = "CRUZ DE LA SUERTE";
-  if (state.cruzDailyDate) {
-    title += " " + esc(formatDateLabel(state.cruzDailyDate));
-  }
-
-  var html =
-    '<h2 class="daily-sidebar__title">' + title + '</h2>';
+  var html = "";
 
   if (!cards.length) {
     dailySidebarEl.innerHTML =

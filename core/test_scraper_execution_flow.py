@@ -170,10 +170,10 @@ class ScraperExecutionFlowTestCase(TestCase):
 
     def test_missing_groups_accepts_nearby_persisted_time_within_tolerance(self):
         expected_groups = [
-            {"provider_name": "Triple Caracas A", "draw_time": "19:10", "scope": "group"},
+            {"provider_name": "Triple Caracas A", "draw_time": "16:30", "scope": "group"},
         ]
         persisted_groups = [
-            {"provider_name": "Triple Caracas A", "draw_time": "19:00", "scope": "group"},
+            {"provider_name": "Triple Caracas A", "draw_time": "16:40", "scope": "group"},
         ]
 
         missing = ScraperExecutionService._get_missing_groups(expected_groups, persisted_groups)
@@ -182,7 +182,7 @@ class ScraperExecutionFlowTestCase(TestCase):
 
     def test_due_expected_groups_waits_for_grace_window(self):
         now = timezone.make_aware(
-            datetime(2026, 3, 23, 19, 10 + STRICT_EXPECTED_GROUP_GRACE_MINUTES - 1, 0),
+            datetime(2026, 3, 23, 16, 30 + STRICT_EXPECTED_GROUP_GRACE_MINUTES - 1, 0),
             timezone.get_current_timezone(),
         )
 
@@ -193,6 +193,6 @@ class ScraperExecutionFlowTestCase(TestCase):
         )
 
         self.assertNotIn(
-            {"provider_name": "Triple Caracas A", "draw_time": "19:10", "scope": "group"},
+            {"provider_name": "Triple Caracas A", "draw_time": "16:30", "scope": "group"},
             groups,
         )

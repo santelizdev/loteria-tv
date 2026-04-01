@@ -24,15 +24,15 @@ LOTOVEN_TABLE_SIMPLE_PROVIDERS = (
 )
 
 LOTOVEN_STRICT_SCHEDULE = {
-    "Triple Caracas A": ("13:00", "16:30", "19:10"),
-    "Triple Caracas B": ("13:00", "16:30", "19:10"),
-    "Triple Caracas C": ("13:00", "16:30", "19:10"),
+    "Triple Caracas A": ("13:00", "16:30"),
+    "Triple Caracas B": ("13:00", "16:30"),
+    "Triple Caracas C": ("13:00", "16:30"),
     "Triple Caliente A": ("13:00", "16:30", "19:10"),
     "Triple Caliente B": ("13:00", "16:30", "19:10"),
     "Triple Caliente C": ("13:00", "16:30", "19:10"),
-    "Triple Tachira A": ("13:15", "16:45", "22:00"),
-    "Triple Tachira B": ("13:15", "16:45", "22:00"),
-    "Triple Tachira C": ("13:15", "16:45", "22:00"),
+    "Triple Tachira A": ("13:15", "16:45"),
+    "Triple Tachira B": ("13:15", "16:45"),
+    "Triple Tachira C": ("13:15", "16:45"),
     "Triple Zamorano A": ("10:00", "12:00", "14:00"),
     "Triple Zamorano C": ("10:00", "12:00", "14:00"),
     # "Triple Chance A": ("13:00", "16:00", "19:00"),  # Pausado por alcance comercial actual.

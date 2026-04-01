@@ -40,9 +40,9 @@ TRIPLE_CALIENTE_URL = "https://lotoven.com/loteria/triplecaliente/resultados/"
 TRIPLE_ZAMORANO_URL = "https://lotoven.com/loteria/triplezamorano/resultados/"
 
 EXPECTED_TRIPLE_ABC_TIMES = {
-    "Triple Caracas": {(13, 0), (16, 30), (19, 10)},
+    "Triple Caracas": {(13, 0), (16, 30)},
     "Triple Caliente": {(13, 0), (16, 30), (19, 10)},
-    "Triple Tachira": {(13, 15), (16, 45), (22, 0)},
+    "Triple Tachira": {(13, 15), (16, 45)},
     "Triple Zamorano": {(10, 0), (12, 0), (14, 0)},
 }
 EXPECTED_TRIPLE_CHANCE_TIMES = {(13, 0), (16, 0), (19, 0)}

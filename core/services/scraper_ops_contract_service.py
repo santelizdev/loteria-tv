@@ -26,9 +26,9 @@ class ScraperOpsContractService:
             expected_group_scope=(
                 "Table simple baseline: Trio Activo, La Ricachona, Triple Centena, Triple Dorado, Triple Facil, Terminal Trio, Terminal La Granjita, La Ruca.",
                 "Triple Chance estricto por grupo A/B/C en 13:00, 16:00 y 19:00.",
-                "Triple Caracas A/B/C en 13:00, 16:30 y 19:10.",
+                "Triple Caracas A/B/C en 13:00 y 16:30.",
                 "Triple Caliente A/B/C en 13:00, 16:30 y 19:10.",
-                "Triple Tachira A/B/C en 13:15, 16:45 y 22:00.",
+                "Triple Tachira A/B/C en 13:15 y 16:45.",
                 "Triple Zamorano A/C en 10:00, 12:00 y 14:00.",
             ),
             real_failure_definition=(

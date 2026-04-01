@@ -43,7 +43,8 @@ VISIBLE_ANIMALITO_PROVIDERS = (
     "Lotto Activo",
     "Lotto Activo Interl",
     "Lotto Rey",
-    "Mega Animal",
+    "Mega Animal 40",
+    "Condor Gana",
     "SelvaPlus",
 )
 
@@ -51,8 +52,29 @@ ACTIVE_SCRAPER_KEYS = (
     "lotoven_triples",
     "tuazar_triples",
     "lotoven_animalitos",
-    # "condor_animalitos",  # Pausado por alcance comercial actual.
+    "condor_animalitos",
 )
+
+ANIMALITO_PROVIDER_ALIASES = {
+    "guacharito": "Guacharito",
+    "elguacharito": "Guacharito",
+    "guacharo": "Guacharo",
+    "elguacharo": "Guacharo",
+    "cazaloton": "Cazaloton",
+    "cazalotonanimalitos": "Cazaloton",
+    "cazalotonline": "Cazaloton",
+    "lagranjita": "La Granjita",
+    "lotochaima": "Loto Chaima",
+    "lottoactivo": "Lotto Activo",
+    "lottoactivointerl": "Lotto Activo Interl",
+    "lottoactivointernacional": "Lotto Activo Interl",
+    "lottorey": "Lotto Rey",
+    "megaanimal": "Mega Animal 40",
+    "megaanimal40": "Mega Animal 40",
+    "condorgana": "Condor Gana",
+    "selvaplus": "SelvaPlus",
+    "selvaplusanimalitos": "SelvaPlus",
+}
 
 
 def _normalize_provider_key(value: str) -> str:
@@ -78,5 +100,16 @@ def visible_animalito_provider_keys() -> set[str]:
     return {_normalize_provider_key(name) for name in VISIBLE_ANIMALITO_PROVIDERS}
 
 
+def canonical_animalito_provider_name(name: str) -> str:
+    raw_name = str(name or "").strip()
+    if not raw_name:
+        return ""
+    normalized = _normalize_provider_key(raw_name)
+    return ANIMALITO_PROVIDER_ALIASES.get(normalized, raw_name)
+
+
 def is_visible_animalito_provider(name: str) -> bool:
-    return _normalize_provider_key(name) in visible_animalito_provider_keys()
+    canonical = canonical_animalito_provider_name(name)
+    if not canonical:
+        return False
+    return _normalize_provider_key(canonical) in visible_animalito_provider_keys()

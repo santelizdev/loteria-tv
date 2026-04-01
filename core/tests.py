@@ -29,6 +29,10 @@ from core.models import (
     Transmission,
 )
 from core.services.device_telemetry_service import DeviceTelemetryService
+from core.services.provider_catalog_service import (
+    canonical_animalito_provider_name,
+    is_visible_animalito_provider,
+)
 from core.services.result_window_service import delete_future_rows_for_provider
 from core.services.scraper_notification_service import ScraperNotificationService
 from core.services.scraper_health_service import ScraperHealthService
@@ -46,6 +50,20 @@ TEST_CHANNEL_LAYERS = {
         "BACKEND": "channels.layers.InMemoryChannelLayer",
     }
 }
+
+
+class AnimalitoProviderCatalogTestCase(TestCase):
+    def test_canonical_name_maps_known_aliases(self):
+        self.assertEqual(canonical_animalito_provider_name("Mega Animal"), "Mega Animal 40")
+        self.assertEqual(canonical_animalito_provider_name("Mega Animal 40"), "Mega Animal 40")
+        self.assertEqual(canonical_animalito_provider_name("El Guácharo"), "Guacharo")
+        self.assertEqual(canonical_animalito_provider_name("Condor Gana"), "Condor Gana")
+
+    def test_visible_provider_check_accepts_catalog_aliases(self):
+        self.assertTrue(is_visible_animalito_provider("Mega Animal"))
+        self.assertTrue(is_visible_animalito_provider("Mega Animal 40"))
+        self.assertTrue(is_visible_animalito_provider("El Guacharito"))
+        self.assertTrue(is_visible_animalito_provider("Condor Gana"))
 
 
 @override_settings(CACHES=TEST_CACHES, CHANNEL_LAYERS=TEST_CHANNEL_LAYERS)
