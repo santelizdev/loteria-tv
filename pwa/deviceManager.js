@@ -50,6 +50,73 @@ function getNextHeartbeatDelayMs() {
   return base + Math.floor(Math.random() * jitter);
 }
 
+function getCookieValue(name) {
+  var prefix = String(name || "") + "=";
+  var raw = String(document.cookie || "");
+  if (!raw) return "";
+
+  var parts = raw.split(";");
+  for (var i = 0; i < parts.length; i++) {
+    var entry = String(parts[i] || "").trim();
+    if (entry.indexOf(prefix) !== 0) continue;
+    return decodeURIComponent(entry.slice(prefix.length));
+  }
+  return "";
+}
+
+function setCookieValue(name, value) {
+  var encoded = encodeURIComponent(String(value || "").trim());
+  document.cookie = [
+    String(name || "") + "=" + encoded,
+    "Path=/",
+    "Max-Age=" + String(60 * 60 * 24 * 365 * 5),
+    "SameSite=Lax"
+  ].join("; ");
+}
+
+function removeCookieValue(name) {
+  document.cookie = [
+    String(name || "") + "=",
+    "Path=/",
+    "Max-Age=0",
+    "SameSite=Lax"
+  ].join("; ");
+}
+
+function getPersistentValue(key) {
+  var value = "";
+  try {
+    value = String(localStorage.getItem(key) || "").trim();
+  } catch (e) {}
+
+  if (value) return value;
+
+  value = String(getCookieValue(key) || "").trim();
+  if (!value) return "";
+
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {}
+  return value;
+}
+
+function setPersistentValue(key, value) {
+  var normalized = String(value || "").trim();
+  if (!normalized) return;
+
+  try {
+    localStorage.setItem(key, normalized);
+  } catch (e) {}
+  setCookieValue(key, normalized);
+}
+
+function removePersistentValue(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch (e) {}
+  removeCookieValue(key);
+}
+
 function buildFormBody(data) {
   var parts = [];
   var key;
@@ -124,10 +191,10 @@ function uuidv4() {
   );
 }
 function getDeviceId() {
-  var id = localStorage.getItem("device_id");
+  var id = getPersistentValue("device_id");
   if (!id) {
     id = uuidv4();
-    localStorage.setItem("device_id", id);
+    setPersistentValue("device_id", id);
   }
   return id;
 }
@@ -135,16 +202,14 @@ function getDeviceId() {
 function getActivationCode() {
   var urlCode = (getQueryParam("code") || "").trim();
   if (urlCode) {
-    localStorage.setItem("activation_code", urlCode);
+    setPersistentValue("activation_code", urlCode);
     return urlCode;
   }
-  return (localStorage.getItem("activation_code") || "").trim();
+  return getPersistentValue("activation_code");
 }
 
 function clearActivationCode() {
-  try {
-    localStorage.removeItem("activation_code");
-  } catch (e) {}
+  removePersistentValue("activation_code");
 }
 
 // ============================================
@@ -226,7 +291,8 @@ DeviceManager.prototype.registerDevice = function () {
   }).then(function (data) {
     var c = String(data.activation_code || "").trim();
     if (!c) throw new Error("Register did not return activation_code");
-    localStorage.setItem("activation_code", c);
+    setPersistentValue("activation_code", c);
+    setPersistentValue("device_id", self.deviceId);
     self.activationCode = c;
     return c;
   });
@@ -352,6 +418,9 @@ DeviceManager.prototype.sendHeartbeatOnce = function () {
   return fetch(apiBase + ENDPOINTS.heartbeat, {
     method: "POST",
     cache: "no-store",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+    },
     body: buildFormBody({
       device_id: self.deviceId,
       code: self.activationCode,

@@ -34,13 +34,36 @@
     return String(value || "").trim().toUpperCase();
   }
 
+  function getCookieValue(name) {
+    var prefix = String(name || "") + "=";
+    var raw = String(document.cookie || "");
+    if (!raw) return "";
+
+    var parts = raw.split(";");
+    for (var i = 0; i < parts.length; i++) {
+      var entry = String(parts[i] || "").trim();
+      if (entry.indexOf(prefix) !== 0) continue;
+      return decodeURIComponent(entry.slice(prefix.length));
+    }
+    return "";
+  }
+
+  function readPersistentValue(key) {
+    var value = "";
+    try {
+      value = String(localStorage.getItem(key) || "").trim();
+    } catch (e) {}
+    if (value) return value;
+    return String(getCookieValue(key) || "").trim();
+  }
+
   function getActivationCode() {
-    var fromStorage = localStorage.getItem("activation_code");
+    var fromStorage = readPersistentValue("activation_code");
     return normalizeCode(fromStorage);
   }
 
   function getDeviceId() {
-    return String(localStorage.getItem("device_id") || "").trim();
+    return readPersistentValue("device_id");
   }
 
   function isAllowedForCode(code) {
@@ -120,6 +143,9 @@
     return fetch(getApiBase() + ENDPOINT, {
       method: "POST",
       cache: "no-store",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+      },
       body: buildFormBody({
         device_id: deviceId,
         code: code,
