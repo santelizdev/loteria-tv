@@ -7,6 +7,7 @@ from django.db.models import QuerySet
 from django.utils import timezone
 
 from core.models import AnimalitoResult, CurrentResult, ScraperExecution, ScraperIncident
+from core.services.provider_catalog_service import canonical_animalito_provider_name
 from core.services.scraper_execution_retention_service import ScraperExecutionRetentionService
 from core.services.scraper_ops_contract_service import ScraperOpsContractService
 from core.services.tuazar_animalito_fallback_service import (
@@ -14,18 +15,14 @@ from core.services.tuazar_animalito_fallback_service import (
     TuAzarAnimalitoFallbackService,
 )
 
-STRICT_EXPECTED_GROUP_GRACE_MINUTES = 12
+EXPECTED_GROUP_GRACE_MINUTES = 12
 STRICT_GROUP_TIME_TOLERANCE_MINUTES = 15
 PRIMARY_ATTEMPT_THRESHOLD = 3
 FALLBACK_ATTEMPT_THRESHOLD = 3
-BASELINE_PROVIDER_START_TIMES = {
-    "lotoven_triples": "08:15",
-    "tuazar_triples": "09:15",
-    "lotoven_animalitos": "08:15",
-}
-SCRAPER_SCOPE_START_TIMES = {
-    "lotoven_animalitos": "08:15",
-}
+
+
+def _hourly_slots(*, start_hour: int, end_hour: int, minute: int = 0) -> tuple[str, ...]:
+    return tuple(f"{hour:02d}:{minute:02d}" for hour in range(start_hour, end_hour + 1))
 
 LOTOVEN_TABLE_SIMPLE_PROVIDERS = (
     "Trio Activo",
@@ -39,37 +36,48 @@ LOTOVEN_TABLE_SIMPLE_PROVIDERS = (
 )
 
 LOTOVEN_STRICT_SCHEDULE = {
-    "Triple Caracas A": ("13:00", "16:30"),
-    "Triple Caracas B": ("13:00", "16:30"),
-    "Triple Caracas C": ("13:00", "16:30"),
+    "Triple Caracas A": ("13:00", "16:30", "19:10"),
+    "Triple Caracas B": ("13:00", "16:30", "19:10"),
+    "Triple Caracas C": ("13:00", "16:30", "19:10"),
     "Triple Caliente A": ("13:00", "16:30", "19:10"),
     "Triple Caliente B": ("13:00", "16:30", "19:10"),
     "Triple Caliente C": ("13:00", "16:30", "19:10"),
-    "Triple Tachira A": ("13:15", "16:45"),
-    "Triple Tachira B": ("13:15", "16:45"),
-    "Triple Tachira C": ("13:15", "16:45"),
+    "Triple Tachira A": ("13:15", "16:45", "22:00"),
+    "Triple Tachira B": ("13:15", "16:45", "22:00"),
+    "Triple Tachira C": ("13:15", "16:45", "22:00"),
     "Triple Zamorano A": ("10:00", "12:00", "14:00"),
     "Triple Zamorano C": ("10:00", "12:00", "14:00"),
-    # "Triple Chance A": ("13:00", "16:00", "19:00"),  # Pausado por alcance comercial actual.
-    # "Triple Chance B": ("13:00", "16:00", "19:00"),  # Pausado por alcance comercial actual.
-    # "Triple Chance C": ("13:00", "16:00", "19:00"),  # Pausado por alcance comercial actual.
+    "Triple Zulia A": ("12:45", "16:45", "19:05"),
+    "Triple Zulia B": ("12:45", "16:45", "19:05"),
+    "Triple Zulia C": ("12:45", "16:45", "19:05"),
 }
 
-TUAZAR_BASELINE_PROVIDERS = (
-    "Chance Astral",
-    "Triple Gana",
-    "Super Gana",
-)
+TRIPLE_PROVIDER_SCHEDULE = {
+    "Chance Astral": _hourly_slots(start_hour=9, end_hour=19),
+    "Trio Activo": _hourly_slots(start_hour=8, end_hour=19),
+    "Triple Facil": _hourly_slots(start_hour=8, end_hour=19),
+    "Triple Gana": ("13:00", "16:00", "22:00"),
+    "Super Gana": ("13:00", "16:00", "22:00"),
+    "Triple Centena": _hourly_slots(start_hour=8, end_hour=20),
+}
+TRIPLE_PROVIDER_SCHEDULE.update(LOTOVEN_STRICT_SCHEDULE)
 
-LOTOVEN_ANIMALITO_BASELINE_PROVIDERS = (
-    "Cazaloton",
-    "La Granjita",
-    "Loto Chaima",
-    "Lotto Rey",
-    "Mega Animal 40",
-)
+ANIMALITO_PROVIDER_SCHEDULE = {
+    "Guacharito": _hourly_slots(start_hour=8, end_hour=19, minute=30),
+    "Guacharo": _hourly_slots(start_hour=8, end_hour=19),
+    "Cazaloton": _hourly_slots(start_hour=9, end_hour=19),
+    "La Granjita": _hourly_slots(start_hour=8, end_hour=19),
+    "Loto Chaima": _hourly_slots(start_hour=8, end_hour=19),
+    "Lotto Activo": _hourly_slots(start_hour=8, end_hour=19),
+    "Lotto Activo Interl": _hourly_slots(start_hour=8, end_hour=19, minute=30),
+    "Lotto Rey": _hourly_slots(start_hour=8, end_hour=19, minute=30),
+    "Mega Animal 40": _hourly_slots(start_hour=9, end_hour=20),
+    "SelvaPlus": _hourly_slots(start_hour=8, end_hour=19),
+}
 
-CONDOR_PROVIDER = ("Condor Gana",)
+CONDOR_PROVIDER_SCHEDULE = {
+    "Condor Gana": _hourly_slots(start_hour=9, end_hour=19),
+}
 
 
 @dataclass(frozen=True)
@@ -236,16 +244,17 @@ class ScraperExecutionService:
 
     @classmethod
     def _get_due_expected_groups(cls, scraper_key: str, draw_date, *, now) -> list[dict]:
+        del draw_date
         local_now = timezone.localtime(now)
         current_time = local_now.time().replace(second=0, microsecond=0)
 
         groups: list[dict] = []
-        for provider_name, time_values in cls._get_strict_schedule(scraper_key).items():
+        for provider_name, time_values in cls._get_expected_schedule(scraper_key).items():
             for time_str in time_values:
                 draw_time = cls._parse_time(time_str)
                 draw_time_with_grace = cls._add_minutes_to_time(
                     draw_time,
-                    cls._get_strict_group_grace_minutes(scraper_key),
+                    cls._get_expected_group_grace_minutes(scraper_key),
                 )
                 if draw_time_with_grace <= current_time:
                     groups.append(
@@ -256,22 +265,7 @@ class ScraperExecutionService:
                         }
                     )
 
-        for provider_name in cls._get_baseline_providers(scraper_key):
-            if not cls._is_baseline_provider_due(scraper_key, provider_name, current_time=current_time):
-                continue
-            groups.append(
-                {
-                    "provider_name": provider_name,
-                    "draw_time": "",
-                    "scope": "provider",
-                }
-            )
-
-        if (
-            not groups
-            and cls._supports_scraper_scope(scraper_key)
-            and cls._is_scraper_scope_due(scraper_key, current_time=current_time)
-        ):
+        if groups and cls._supports_scraper_scope(scraper_key):
             groups.append(
                 {
                     "provider_name": "",
@@ -639,8 +633,6 @@ class ScraperExecutionService:
     def _get_fallback_scraper_key(cls, incident: ScraperIncident) -> str:
         if incident.scraper_key != "lotoven_animalitos":
             return ""
-        if incident.detection_scope != "provider":
-            return ""
         if incident.provider_name != "Lotto Rey":
             return ""
         return TuAzarAnimalitoFallbackService.SCRAPER_KEY
@@ -667,7 +659,7 @@ class ScraperExecutionService:
 
     @staticmethod
     def _can_auto_trigger_manual(incident: ScraperIncident) -> bool:
-        return incident.detection_scope == "scraper"
+        return incident.detection_scope in {"group", "scraper", "provider"}
 
     @classmethod
     def _retire_obsolete_open_incidents(
@@ -795,7 +787,35 @@ class ScraperExecutionService:
                 missing.append(group)
             else:
                 matched_group_keys.add(key)
-        return missing
+        return cls._collapse_missing_groups(missing)
+
+    @classmethod
+    def _collapse_missing_groups(cls, missing_groups: list[dict]) -> list[dict]:
+        latest_by_provider: dict[str, dict] = {}
+        passthrough: list[dict] = []
+
+        for group in missing_groups:
+            if group.get("scope") != "group":
+                passthrough.append(group)
+                continue
+
+            provider_name = group.get("provider_name") or ""
+            draw_time = group.get("draw_time") or ""
+            if not provider_name or not draw_time:
+                passthrough.append(group)
+                continue
+
+            current = latest_by_provider.get(provider_name)
+            if current is None:
+                latest_by_provider[provider_name] = group
+                continue
+
+            if cls._time_to_minutes(cls._parse_time(draw_time)) >= cls._time_to_minutes(
+                cls._parse_time(current.get("draw_time") or "00:00")
+            ):
+                latest_by_provider[provider_name] = group
+
+        return passthrough + list(latest_by_provider.values())
 
     @classmethod
     def _get_persisted_groups(cls, scraper_key: str, draw_date) -> list[dict]:
@@ -804,27 +824,17 @@ class ScraperExecutionService:
         for row in queryset:
             if not cls._is_usable_result_origin(row["result_origin"]):
                 continue
+            provider_name = row["provider__name"] or ""
+            if cls._is_animalito_scraper(scraper_key):
+                provider_name = canonical_animalito_provider_name(provider_name.strip())
             draw_time_str = row["draw_time"].strftime("%H:%M") if row["draw_time"] else ""
             groups.append(
                 {
-                    "provider_name": row["provider__name"],
+                    "provider_name": provider_name,
                     "draw_time": draw_time_str,
                     "scope": "group",
                 }
             )
-
-        provider_scope = cls._get_baseline_providers(scraper_key)
-        if provider_scope:
-            provider_presence = {group["provider_name"] for group in groups}
-            for provider_name in provider_scope:
-                if provider_name in provider_presence:
-                    groups.append(
-                        {
-                            "provider_name": provider_name,
-                            "draw_time": "",
-                            "scope": "provider",
-                        }
-                    )
 
         if groups:
             groups.append(
@@ -895,31 +905,29 @@ class ScraperExecutionService:
 
     @classmethod
     def _get_provider_scope(cls, scraper_key: str) -> list[str]:
-        if scraper_key == "lotoven_triples":
-            return list(LOTOVEN_TABLE_SIMPLE_PROVIDERS) + list(LOTOVEN_STRICT_SCHEDULE.keys())
-        if scraper_key == "tuazar_triples":
-            return list(TUAZAR_BASELINE_PROVIDERS)
+        if scraper_key in {"lotoven_triples", "tuazar_triples"}:
+            return list(TRIPLE_PROVIDER_SCHEDULE.keys())
         if scraper_key == "condor_animalitos":
-            return list(CONDOR_PROVIDER)
+            return list(CONDOR_PROVIDER_SCHEDULE.keys())
         return []
 
     @classmethod
     def _get_baseline_providers(cls, scraper_key: str) -> tuple[str, ...]:
-        if scraper_key == "lotoven_triples":
-            return LOTOVEN_TABLE_SIMPLE_PROVIDERS
-        if scraper_key == "tuazar_triples":
-            return TUAZAR_BASELINE_PROVIDERS
-        if scraper_key == "lotoven_animalitos":
-            return LOTOVEN_ANIMALITO_BASELINE_PROVIDERS
-        if scraper_key == "condor_animalitos":
-            return CONDOR_PROVIDER
         return ()
 
     @classmethod
     def _get_strict_schedule(cls, scraper_key: str) -> dict[str, tuple[str, ...]]:
-        if scraper_key == "lotoven_triples":
-            return LOTOVEN_STRICT_SCHEDULE
+        if scraper_key in {"lotoven_triples", "tuazar_triples"}:
+            return TRIPLE_PROVIDER_SCHEDULE
+        if scraper_key == "lotoven_animalitos":
+            return ANIMALITO_PROVIDER_SCHEDULE
+        if scraper_key == "condor_animalitos":
+            return CONDOR_PROVIDER_SCHEDULE
         return {}
+
+    @classmethod
+    def _get_expected_schedule(cls, scraper_key: str) -> dict[str, tuple[str, ...]]:
+        return cls._get_strict_schedule(scraper_key)
 
     @classmethod
     def _get_provider_source_contains(cls, scraper_key: str) -> tuple[str, ...]:
@@ -929,7 +937,12 @@ class ScraperExecutionService:
 
     @classmethod
     def _supports_scraper_scope(cls, scraper_key: str) -> bool:
-        return scraper_key == "lotoven_animalitos"
+        return scraper_key in {
+            "lotoven_triples",
+            "tuazar_triples",
+            "lotoven_animalitos",
+            "condor_animalitos",
+        }
 
     @staticmethod
     def _parse_time(value: str):
@@ -948,9 +961,14 @@ class ScraperExecutionService:
         return datetime.strptime(f"{hour:02d}:{minute:02d}", "%H:%M").time()
 
     @classmethod
-    def _get_strict_group_grace_minutes(cls, scraper_key: str) -> int:
-        if scraper_key == "lotoven_triples":
-            return STRICT_EXPECTED_GROUP_GRACE_MINUTES
+    def _get_expected_group_grace_minutes(cls, scraper_key: str) -> int:
+        if scraper_key in {
+            "lotoven_triples",
+            "tuazar_triples",
+            "lotoven_animalitos",
+            "condor_animalitos",
+        }:
+            return EXPECTED_GROUP_GRACE_MINUTES
         return 0
 
     @classmethod
@@ -958,21 +976,6 @@ class ScraperExecutionService:
         if scraper_key == "lotoven_triples":
             return STRICT_GROUP_TIME_TOLERANCE_MINUTES
         return 0
-
-    @classmethod
-    def _is_baseline_provider_due(cls, scraper_key: str, provider_name: str, *, current_time) -> bool:
-        del provider_name
-        start_time_str = BASELINE_PROVIDER_START_TIMES.get(scraper_key)
-        if not start_time_str:
-            return True
-        return current_time >= cls._parse_time(start_time_str)
-
-    @classmethod
-    def _is_scraper_scope_due(cls, scraper_key: str, *, current_time) -> bool:
-        start_time_str = SCRAPER_SCOPE_START_TIMES.get(scraper_key)
-        if not start_time_str:
-            return True
-        return current_time >= cls._parse_time(start_time_str)
 
     @classmethod
     def _matches_nearby_group_time(
@@ -1027,7 +1030,16 @@ class ScraperExecutionService:
 
     @staticmethod
     def _guess_scraper_key_from_provider(provider_name: str) -> str:
-        return "lotoven_triples" if provider_name.startswith("Triple ") else ""
+        if provider_name.startswith("Triple ") or provider_name in {
+            "Chance Astral",
+            "Trio Activo",
+            "Triple Facil",
+            "Triple Gana",
+            "Super Gana",
+            "Triple Centena",
+        }:
+            return "lotoven_triples"
+        return ""
 
     @staticmethod
     def _scope_reason_code(scope: str) -> str:
@@ -1039,10 +1051,11 @@ class ScraperExecutionService:
 
     @staticmethod
     def _incident_impacts_frontend(incident: ScraperIncident) -> bool:
-        return (
-            incident.contingency_stage == ScraperIncident.ContingencyStage.MANUAL_REQUIRED
-            and incident.detection_scope == "scraper"
-        )
+        return incident.contingency_stage == ScraperIncident.ContingencyStage.MANUAL_REQUIRED
+
+    @staticmethod
+    def _is_animalito_scraper(scraper_key: str) -> bool:
+        return scraper_key in {"lotoven_animalitos", "condor_animalitos"}
 
     @staticmethod
     def _is_usable_result_origin(result_origin: str) -> bool:

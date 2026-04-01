@@ -58,8 +58,10 @@ ACTIVE_SCRAPER_KEYS = (
 ANIMALITO_PROVIDER_ALIASES = {
     "guacharito": "Guacharito",
     "elguacharito": "Guacharito",
+    "elguacharitomillonario": "Guacharito",
     "guacharo": "Guacharo",
     "elguacharo": "Guacharo",
+    "guacharoactivo": "Guacharo",
     "cazaloton": "Cazaloton",
     "cazalotonanimalitos": "Cazaloton",
     "cazalotonline": "Cazaloton",
@@ -68,6 +70,7 @@ ANIMALITO_PROVIDER_ALIASES = {
     "lottoactivo": "Lotto Activo",
     "lottoactivointerl": "Lotto Activo Interl",
     "lottoactivointernacional": "Lotto Activo Interl",
+    "lottoactivordint": "Lotto Activo Interl",
     "lotorey": "Lotto Rey",
     "lottorey": "Lotto Rey",
     "megaanimal": "Mega Animal 40",
@@ -99,6 +102,10 @@ def visible_triple_provider_names() -> tuple[str, ...]:
 
 def visible_animalito_provider_keys() -> set[str]:
     return {_normalize_provider_key(name) for name in VISIBLE_ANIMALITO_PROVIDERS}
+
+
+def visible_animalito_provider_names() -> tuple[str, ...]:
+    return tuple(VISIBLE_ANIMALITO_PROVIDERS)
 
 
 def canonical_animalito_provider_name(name: str) -> str:

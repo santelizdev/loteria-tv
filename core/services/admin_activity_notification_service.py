@@ -39,6 +39,10 @@ class AdminActivityNotificationService:
         )
 
     @classmethod
+    def login_notifications_enabled(cls) -> bool:
+        return bool(getattr(settings, "ADMIN_ACTIVITY_LOGIN_TELEGRAM_ENABLED", False))
+
+    @classmethod
     def notify_admin_log_entry(cls, log_entry: LogEntry) -> bool:
         if not cls.is_enabled() or not cls.should_notify_log_entry(log_entry):
             return False
@@ -52,7 +56,9 @@ class AdminActivityNotificationService:
 
     @classmethod
     def notify_user_login(cls, *, user, request) -> bool:
-        if not cls.is_enabled():
+        if not cls.is_enabled() or not cls.login_notifications_enabled():
+            return False
+        if not getattr(user, "is_staff", False):
             return False
 
         ip_address = cls._extract_ip(request)

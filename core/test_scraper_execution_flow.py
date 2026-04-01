@@ -8,15 +8,13 @@ from django.utils import timezone
 
 from core.models import AnimalitoResult, CurrentResult, Provider, ScraperExecution, ScraperHealth, ScraperIncident
 from core.services.scraper_execution_service import (
-    BASELINE_PROVIDER_START_TIMES,
+    ANIMALITO_PROVIDER_SCHEDULE,
+    CONDOR_PROVIDER_SCHEDULE,
+    EXPECTED_GROUP_GRACE_MINUTES,
     FALLBACK_ATTEMPT_THRESHOLD,
-    LOTOVEN_ANIMALITO_BASELINE_PROVIDERS,
-    LOTOVEN_STRICT_SCHEDULE,
-    LOTOVEN_TABLE_SIMPLE_PROVIDERS,
     PRIMARY_ATTEMPT_THRESHOLD,
-    SCRAPER_SCOPE_START_TIMES,
     ScraperExecutionService,
-    STRICT_EXPECTED_GROUP_GRACE_MINUTES,
+    TRIPLE_PROVIDER_SCHEDULE,
 )
 from core.services.scraper_health_service import ScraperHealthService
 from core.services.scraper_notification_service import ScraperNotificationService
@@ -37,16 +35,7 @@ class ScraperExecutionFlowTestCase(TestCase):
         return provider
 
     def _seed_lotoven_results(self, *, missing_group: tuple[str, str] | None = None) -> None:
-        for provider_name in LOTOVEN_TABLE_SIMPLE_PROVIDERS:
-            provider = self._upsert_provider(provider_name)
-            CurrentResult.objects.update_or_create(
-                provider=provider,
-                draw_date=self.draw_date,
-                draw_time=datetime.strptime("08:00", "%H:%M").time(),
-                defaults={"winning_number": "111", "image_url": "", "extra": None},
-            )
-
-        for provider_name, times in LOTOVEN_STRICT_SCHEDULE.items():
+        for provider_name, times in TRIPLE_PROVIDER_SCHEDULE.items():
             provider = self._upsert_provider(provider_name)
             for time_str in times:
                 if missing_group == (provider_name, time_str):
@@ -59,8 +48,7 @@ class ScraperExecutionFlowTestCase(TestCase):
                 )
 
     def _seed_lotoven_animalitos_results(self, *, missing_provider: str | None = None) -> None:
-        draw_times = ("08:00", "09:00")
-        for provider_name in LOTOVEN_ANIMALITO_BASELINE_PROVIDERS:
+        for provider_name, draw_times in ANIMALITO_PROVIDER_SCHEDULE.items():
             if provider_name == missing_provider:
                 continue
             provider = self._upsert_provider(provider_name)
@@ -79,6 +67,25 @@ class ScraperExecutionFlowTestCase(TestCase):
                         "provider_logo_url": "https://lotoven.com/logo.png",
                     },
                 )
+
+    def _seed_condor_results(self, *, missing_time: str | None = None) -> None:
+        provider = self._upsert_provider("Condor Gana")
+        provider.source_url = "https://www.lottoresultados.com/resultados/animalitos/condor-gana"
+        provider.save(update_fields=["source_url"])
+        for draw_time in CONDOR_PROVIDER_SCHEDULE["Condor Gana"]:
+            if draw_time == missing_time:
+                continue
+            AnimalitoResult.objects.update_or_create(
+                provider=provider,
+                draw_date=self.draw_date,
+                draw_time=datetime.strptime(draw_time, "%H:%M").time(),
+                defaults={
+                    "animal_number": "09",
+                    "animal_name": "Toro",
+                    "animal_image_url": "https://condor.example/img.png",
+                    "provider_logo_url": "",
+                },
+            )
 
     @patch("core.services.scraper_notification_service.requests.post")
     @patch("core.services.scraper_health_service.call_command")
@@ -211,7 +218,7 @@ class ScraperExecutionFlowTestCase(TestCase):
 
     def test_due_expected_groups_waits_for_grace_window(self):
         now = timezone.make_aware(
-            datetime(2026, 3, 23, 16, 30 + STRICT_EXPECTED_GROUP_GRACE_MINUTES - 1, 0),
+            datetime(2026, 3, 23, 16, 30 + EXPECTED_GROUP_GRACE_MINUTES - 1, 0),
             timezone.get_current_timezone(),
         )
 
@@ -226,11 +233,9 @@ class ScraperExecutionFlowTestCase(TestCase):
             groups,
         )
 
-    def test_due_expected_groups_waits_for_lotoven_baseline_start(self):
-        start_time = BASELINE_PROVIDER_START_TIMES["lotoven_triples"]
-        start_hour, start_minute = [int(value) for value in start_time.split(":")]
+    def test_due_expected_groups_waits_for_lotoven_first_due_slot(self):
         now = timezone.make_aware(
-            datetime(2026, 3, 23, start_hour, start_minute - 1, 0),
+            datetime(2026, 3, 23, 8, EXPECTED_GROUP_GRACE_MINUTES - 1, 0),
             timezone.get_current_timezone(),
         )
 
@@ -245,11 +250,9 @@ class ScraperExecutionFlowTestCase(TestCase):
             groups,
         )
 
-    def test_due_expected_groups_waits_for_tuazar_baseline_start(self):
-        start_time = BASELINE_PROVIDER_START_TIMES["tuazar_triples"]
-        start_hour, start_minute = [int(value) for value in start_time.split(":")]
+    def test_due_expected_groups_waits_for_tuazar_first_due_slot(self):
         now = timezone.make_aware(
-            datetime(2026, 3, 23, start_hour, start_minute - 1, 0),
+            datetime(2026, 3, 23, 8, EXPECTED_GROUP_GRACE_MINUTES - 1, 0),
             timezone.get_current_timezone(),
         )
 
@@ -261,11 +264,9 @@ class ScraperExecutionFlowTestCase(TestCase):
 
         self.assertEqual(groups, [])
 
-    def test_due_expected_groups_waits_for_lotoven_animalitos_scraper_start(self):
-        start_time = SCRAPER_SCOPE_START_TIMES["lotoven_animalitos"]
-        start_hour, start_minute = [int(value) for value in start_time.split(":")]
+    def test_due_expected_groups_waits_for_lotoven_animalitos_first_due_slot(self):
         now = timezone.make_aware(
-            datetime(2026, 3, 23, start_hour, start_minute - 1, 0),
+            datetime(2026, 3, 23, 8, EXPECTED_GROUP_GRACE_MINUTES - 1, 0),
             timezone.get_current_timezone(),
         )
 
@@ -277,11 +278,9 @@ class ScraperExecutionFlowTestCase(TestCase):
 
         self.assertEqual(groups, [])
 
-    def test_due_expected_groups_includes_lotoven_animalito_baseline_providers_after_start(self):
-        start_time = SCRAPER_SCOPE_START_TIMES["lotoven_animalitos"]
-        start_hour, start_minute = [int(value) for value in start_time.split(":")]
+    def test_due_expected_groups_includes_lotoven_animalito_due_groups_after_grace(self):
         now = timezone.make_aware(
-            datetime(2026, 3, 23, start_hour, start_minute + 1, 0),
+            datetime(2026, 3, 23, 9, EXPECTED_GROUP_GRACE_MINUTES + 1, 0),
             timezone.get_current_timezone(),
         )
 
@@ -292,24 +291,21 @@ class ScraperExecutionFlowTestCase(TestCase):
         )
 
         self.assertIn(
-            {"provider_name": "Lotto Rey", "draw_time": "", "scope": "provider"},
+            {"provider_name": "Guacharo", "draw_time": "08:00", "scope": "group"},
             groups,
         )
         self.assertIn(
-            {"provider_name": "Mega Animal 40", "draw_time": "", "scope": "provider"},
+            {"provider_name": "Guacharito", "draw_time": "08:30", "scope": "group"},
             groups,
         )
-        self.assertEqual(
-            len([group for group in groups if group["scope"] == "provider"]),
-            len(LOTOVEN_ANIMALITO_BASELINE_PROVIDERS),
-        )
+        self.assertTrue(any(group["provider_name"] == "Lotto Rey" for group in groups))
 
     @override_settings(
         SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
         SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
     )
     @patch("core.services.scraper_notification_service.requests.post")
-    def test_notify_pending_incidents_ignores_group_manual_required(self, mock_post):
+    def test_notify_pending_incidents_sends_group_manual_required(self, mock_post):
         incident = ScraperIncident.objects.create(
             fingerprint="lotoven_triples|2026-03-23|group|Triple Caracas A|16:30|missing_expected_group",
             scraper_key="lotoven_triples",
@@ -351,10 +347,10 @@ class ScraperExecutionFlowTestCase(TestCase):
             now=self.fixed_now,
         )
 
-        self.assertEqual(sent, 0)
+        self.assertEqual(sent, 1)
         incident.refresh_from_db()
-        self.assertFalse(incident.alert_sent)
-        mock_post.assert_not_called()
+        self.assertTrue(incident.alert_sent)
+        mock_post.assert_called_once()
 
     @override_settings(
         SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
@@ -401,13 +397,13 @@ class ScraperExecutionFlowTestCase(TestCase):
     @patch("core.services.scraper_health_service.call_command")
     def test_successful_rerun_retires_obsolete_open_contract_incident(self, mock_call_command, mock_post):
         obsolete_incident = ScraperIncident.objects.create(
-            fingerprint="lotoven_triples|2026-03-22|group|Triple Caracas A|19:10|missing_expected_group",
+            fingerprint="lotoven_triples|2026-03-22|group|Triple Chance A|13:00|missing_expected_group",
             scraper_key="lotoven_triples",
             label="Triples Lotoven",
             command_name="scrape_lotoven_tables",
             draw_date=self.draw_date,
-            provider_name="Triple Caracas A",
-            draw_time=datetime.strptime("19:10", "%H:%M").time(),
+            provider_name="Triple Chance A",
+            draw_time=datetime.strptime("13:00", "%H:%M").time(),
             result_model="CurrentResult",
             detection_scope="group",
             validation_profile="strict_schedule",
@@ -438,8 +434,8 @@ class ScraperExecutionFlowTestCase(TestCase):
 
     def test_lotoven_animalitos_without_rows_keeps_single_scraper_incident(self):
         expected_groups = [
-            {"provider_name": "Lotto Rey", "draw_time": "", "scope": "provider"},
-            {"provider_name": "Mega Animal 40", "draw_time": "", "scope": "provider"},
+            {"provider_name": "Lotto Rey", "draw_time": "08:30", "scope": "group"},
+            {"provider_name": "Mega Animal 40", "draw_time": "09:00", "scope": "group"},
         ]
 
         candidates = ScraperExecutionService._build_incident_candidates(
@@ -456,15 +452,15 @@ class ScraperExecutionFlowTestCase(TestCase):
 
     def test_lotoven_animalitos_partial_rows_open_missing_provider_incidents(self):
         expected_groups = [
-            {"provider_name": "Lotto Rey", "draw_time": "", "scope": "provider"},
-            {"provider_name": "Mega Animal 40", "draw_time": "", "scope": "provider"},
+            {"provider_name": "Lotto Rey", "draw_time": "08:30", "scope": "group"},
+            {"provider_name": "Mega Animal 40", "draw_time": "09:00", "scope": "group"},
         ]
         persisted_groups = [
-            {"provider_name": "Lotto Rey", "draw_time": "", "scope": "provider"},
+            {"provider_name": "Lotto Rey", "draw_time": "08:30", "scope": "group"},
             {"provider_name": "", "draw_time": "", "scope": "scraper"},
         ]
         missing_groups = [
-            {"provider_name": "Mega Animal 40", "draw_time": "", "scope": "provider"},
+            {"provider_name": "Mega Animal 40", "draw_time": "09:00", "scope": "group"},
         ]
 
         candidates = ScraperExecutionService._build_incident_candidates(
@@ -477,7 +473,7 @@ class ScraperExecutionFlowTestCase(TestCase):
         )
 
         self.assertEqual(len(candidates), 1)
-        self.assertEqual(candidates[0].failure_reason_code, "missing_provider_rows")
+        self.assertEqual(candidates[0].failure_reason_code, "missing_expected_group")
         self.assertEqual(candidates[0].provider_name, "Mega Animal 40")
 
     @override_settings(
@@ -504,11 +500,42 @@ class ScraperExecutionFlowTestCase(TestCase):
             provider_name="Triple Caracas A",
             failure_reason_code="missing_expected_group",
         )
-        self.assertEqual(incident.contingency_stage, ScraperIncident.ContingencyStage.OBSERVING)
+        self.assertEqual(incident.contingency_stage, ScraperIncident.ContingencyStage.MANUAL_REQUIRED)
         self.assertEqual(incident.primary_attempt_count, PRIMARY_ATTEMPT_THRESHOLD)
-        self.assertIsNone(incident.manual_enabled_at)
-        self.assertFalse(incident.alert_sent)
-        self.assertEqual(mock_post.call_count, 0)
+        self.assertIsNotNone(incident.manual_enabled_at)
+        self.assertTrue(incident.alert_sent)
+        self.assertEqual(mock_post.call_count, 1)
+
+    @override_settings(
+        SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
+        SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
+    )
+    @patch("core.services.scraper_notification_service.requests.post")
+    @patch("core.services.scraper_health_service.call_command")
+    def test_condor_missing_group_escalates_to_manual_after_three_attempts(self, mock_call_command, mock_post):
+        def create_partial_condor(_command_name):
+            self._seed_condor_results(missing_time="12:00")
+            return None
+
+        mock_call_command.side_effect = create_partial_condor
+
+        with patch("core.services.scraper_health_service.timezone.now", return_value=self.fixed_now):
+            with patch("core.services.scraper_execution_service.timezone.now", return_value=self.fixed_now):
+                with patch("core.services.scraper_execution_service.timezone.localdate", return_value=self.draw_date):
+                    for _ in range(PRIMARY_ATTEMPT_THRESHOLD):
+                        ScraperHealthService.run_registered("condor_animalitos")
+
+        incident = ScraperIncident.objects.get(
+            scraper_key="condor_animalitos",
+            provider_name="Condor Gana",
+            draw_time=datetime.strptime("12:00", "%H:%M").time(),
+            failure_reason_code="missing_expected_group",
+        )
+        self.assertEqual(incident.contingency_stage, ScraperIncident.ContingencyStage.MANUAL_REQUIRED)
+        self.assertEqual(incident.primary_attempt_count, PRIMARY_ATTEMPT_THRESHOLD)
+        self.assertIsNotNone(incident.manual_enabled_at)
+        self.assertTrue(incident.alert_sent)
+        self.assertEqual(mock_post.call_count, 1)
 
     @override_settings(
         SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
@@ -545,16 +572,17 @@ class ScraperExecutionFlowTestCase(TestCase):
         incident = ScraperIncident.objects.get(
             scraper_key="lotoven_animalitos",
             provider_name="Lotto Rey",
-            failure_reason_code="missing_provider_rows",
+            draw_time=datetime.strptime("19:30", "%H:%M").time(),
+            failure_reason_code="missing_expected_group",
         )
         self.assertEqual(incident.contingency_stage, ScraperIncident.ContingencyStage.FALLBACK_ACTIVE)
         self.assertEqual(incident.primary_attempt_count, PRIMARY_ATTEMPT_THRESHOLD)
         self.assertEqual(incident.fallback_attempt_count, 0)
         self.assertEqual(incident.fallback_scraper_key, TuAzarAnimalitoFallbackService.SCRAPER_KEY)
         self.assertIsNotNone(incident.fallback_activated_at)
-        self.assertFalse(incident.alert_sent)
+        self.assertTrue(incident.alert_sent)
         self.assertEqual(mock_run_fallback.call_count, 1)
-        self.assertEqual(mock_post.call_count, 0)
+        self.assertEqual(mock_post.call_count, 1)
 
     @override_settings(
         SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
@@ -592,12 +620,13 @@ class ScraperExecutionFlowTestCase(TestCase):
         incident = ScraperIncident.objects.get(
             scraper_key="lotoven_animalitos",
             provider_name="Lotto Rey",
-            failure_reason_code="missing_provider_rows",
+            draw_time=datetime.strptime("19:30", "%H:%M").time(),
+            failure_reason_code="missing_expected_group",
         )
-        self.assertEqual(incident.contingency_stage, ScraperIncident.ContingencyStage.FALLBACK_ACTIVE)
+        self.assertEqual(incident.contingency_stage, ScraperIncident.ContingencyStage.MANUAL_REQUIRED)
         self.assertEqual(incident.primary_attempt_count, PRIMARY_ATTEMPT_THRESHOLD)
         self.assertEqual(incident.fallback_attempt_count, FALLBACK_ATTEMPT_THRESHOLD)
-        self.assertIsNone(incident.manual_enabled_at)
-        self.assertFalse(incident.alert_sent)
+        self.assertIsNotNone(incident.manual_enabled_at)
+        self.assertTrue(incident.alert_sent)
         self.assertEqual(mock_run_fallback.call_count, FALLBACK_ATTEMPT_THRESHOLD)
-        self.assertEqual(mock_post.call_count, 0)
+        self.assertEqual(mock_post.call_count, 2)

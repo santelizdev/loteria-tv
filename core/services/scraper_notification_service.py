@@ -97,15 +97,24 @@ class ScraperNotificationService:
         queryset = cls._normalize_incidents(incidents)
         if not force:
             queryset = [incident for incident in queryset if not incident.alert_sent]
-        return [
-            IncidentNotificationDecision(
-                incident=incident,
-                message=cls.build_incident_message(incident),
+        decisions: list[IncidentNotificationDecision] = []
+        seen_keys: set[tuple[str, str, str, str, str]] = set()
+        for incident in queryset:
+            if incident.status != ScraperIncident.Status.OPEN:
+                continue
+            if not force and not cls._is_incident_ready_for_notification(incident, now=current_dt):
+                continue
+            dedupe_key = cls._incident_notification_key(incident)
+            if dedupe_key in seen_keys:
+                continue
+            seen_keys.add(dedupe_key)
+            decisions.append(
+                IncidentNotificationDecision(
+                    incident=incident,
+                    message=cls.build_incident_message(incident),
+                )
             )
-            for incident in queryset
-            if incident.status == ScraperIncident.Status.OPEN
-            and (force or cls._is_incident_ready_for_notification(incident, now=current_dt))
-        ]
+        return decisions
 
     @classmethod
     def notify_pending_incidents(cls, *, incidents=None, now=None, force=False) -> int:
@@ -124,10 +133,10 @@ class ScraperNotificationService:
         sent = 0
         for decision in decisions:
             cls._dispatch_message(decision.message)
-            incident = decision.incident
-            incident.alert_sent = True
-            incident.alert_sent_at = current_dt
-            incident.save(update_fields=["alert_sent", "alert_sent_at", "updated_at"])
+            cls._mark_incident_notification_group_sent(
+                incident=decision.incident,
+                sent_at=current_dt,
+            )
             sent += 1
         return sent
 
@@ -200,6 +209,32 @@ class ScraperNotificationService:
         return "\n".join(lines).strip()
 
     @classmethod
+    def _incident_notification_key(cls, incident: ScraperIncident) -> tuple[str, str, str, str, str]:
+        provider_name = (incident.provider_name or "").strip()
+        return (
+            incident.scraper_key or "",
+            incident.draw_date.isoformat() if incident.draw_date else "",
+            provider_name,
+            incident.failure_reason_code or "",
+            incident.contingency_stage or "",
+        )
+
+    @classmethod
+    def _mark_incident_notification_group_sent(cls, *, incident: ScraperIncident, sent_at) -> None:
+        filters = {
+            "scraper_key": incident.scraper_key,
+            "draw_date": incident.draw_date,
+            "status": ScraperIncident.Status.OPEN,
+            "failure_reason_code": incident.failure_reason_code,
+            "contingency_stage": incident.contingency_stage,
+            "provider_name": incident.provider_name or "",
+        }
+        ScraperIncident.objects.filter(**filters).update(
+            alert_sent=True,
+            alert_sent_at=sent_at,
+        )
+
+    @classmethod
     def build_incident_message(cls, incident: ScraperIncident) -> str:
         title = "LoteriaTV - Incidente de scraper"
         if incident.failure_reason_code == "command_failed":
@@ -249,10 +284,11 @@ class ScraperNotificationService:
         del now
         if incident.failure_reason_code == "command_failed":
             return True
-        return (
-            incident.contingency_stage == ScraperIncident.ContingencyStage.MANUAL_REQUIRED
-            and incident.detection_scope == "scraper"
-        )
+        if incident.contingency_stage == ScraperIncident.ContingencyStage.FALLBACK_ACTIVE:
+            return True
+        if incident.contingency_stage == ScraperIncident.ContingencyStage.MANUAL_REQUIRED:
+            return True
+        return False
 
     @classmethod
     def _dispatch_message(cls, message: str) -> None:

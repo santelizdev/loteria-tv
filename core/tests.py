@@ -59,6 +59,9 @@ class AnimalitoProviderCatalogTestCase(TestCase):
         self.assertEqual(canonical_animalito_provider_name("Mega Animal 40"), "Mega Animal 40")
         self.assertEqual(canonical_animalito_provider_name("Loto Rey"), "Lotto Rey")
         self.assertEqual(canonical_animalito_provider_name("El Guácharo"), "Guacharo")
+        self.assertEqual(canonical_animalito_provider_name("Guacharo Activo"), "Guacharo")
+        self.assertEqual(canonical_animalito_provider_name("El Guacharito Millonario"), "Guacharito")
+        self.assertEqual(canonical_animalito_provider_name("Lotto Activo RD Int"), "Lotto Activo Interl")
         self.assertEqual(canonical_animalito_provider_name("Condor Gana"), "Condor Gana")
 
     def test_visible_provider_check_accepts_catalog_aliases(self):
@@ -66,6 +69,9 @@ class AnimalitoProviderCatalogTestCase(TestCase):
         self.assertTrue(is_visible_animalito_provider("Mega Animal 40"))
         self.assertTrue(is_visible_animalito_provider("Loto Rey"))
         self.assertTrue(is_visible_animalito_provider("El Guacharito"))
+        self.assertTrue(is_visible_animalito_provider("El Guacharito Millonario"))
+        self.assertTrue(is_visible_animalito_provider("Guacharo Activo"))
+        self.assertTrue(is_visible_animalito_provider("Lotto Activo RD Int"))
         self.assertTrue(is_visible_animalito_provider("Condor Gana"))
 
 
@@ -860,7 +866,19 @@ class AdminActivityNotificationSignalsTestCase(TestCase):
         self.assertIn("Objeto: TV", payload["text"])
 
     @patch("core.services.scraper_notification_service.requests.post")
-    def test_login_notifies(self, mock_post):
+    def test_login_notifications_are_disabled_by_default(self, mock_post):
+        logged_in = self.client.login(username="root", password="secret123")
+
+        self.assertTrue(logged_in)
+        mock_post.assert_not_called()
+
+    @override_settings(
+        ADMIN_ACTIVITY_LOGIN_TELEGRAM_ENABLED=True,
+        SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
+        SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
+    )
+    @patch("core.services.scraper_notification_service.requests.post")
+    def test_login_notifies_when_explicitly_enabled(self, mock_post):
         logged_in = self.client.login(username="root", password="secret123")
 
         self.assertTrue(logged_in)
@@ -1019,43 +1037,53 @@ class PurgeTelemetryEventsCommandTestCase(TestCase):
             [DeviceTelemetryEvent.EventType.LOAD_ERROR],
         )
 
-    @override_settings(
-        SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
-        SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
-    )
-    @patch("core.services.scraper_notification_service.requests.post")
-    def test_notify_active_alerts_respects_signature_cooldown(self, mock_post):
-        now = timezone.now()
-        monitor = ScraperHealthService.get_or_create_monitor("condor_animalitos")
-        monitor.last_status = ScraperHealth.Status.FAILED
-        monitor.last_started_at = now
-        monitor.last_finished_at = now
-        monitor.last_error_message = "condor parser failed"
-        monitor.last_notified_at = now
-        monitor.last_notified_signature = ScraperNotificationService.build_signature(
-            {
+    @patch.object(ScraperNotificationService, "_collect_alerts")
+    def test_notify_active_alerts_respects_signature_cooldown(
+        self,
+        mock_collect_alerts,
+    ):
+        with override_settings(
+            SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
+            SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
+        ):
+            now = timezone.now()
+            monitor = ScraperHealthService.get_or_create_monitor("condor_animalitos")
+            monitor.last_status = ScraperHealth.Status.FAILED
+            monitor.last_started_at = now
+            monitor.last_finished_at = now
+            monitor.last_error_message = "condor parser failed"
+            monitor.consecutive_failures = 1
+            monitor.last_notified_at = now
+            alert = {
                 "scraper_key": "condor_animalitos",
+                "label": "Animalitos Condor Gana",
+                "alert_kind": "failed_today",
                 "status": "failed",
                 "message": "condor parser failed",
                 "last_error_message": "condor parser failed",
                 "last_success_at": None,
+                "consecutive_failures": 1,
             }
-        )
-        monitor.save(
-            update_fields=[
-                "last_status",
-                "last_started_at",
-                "last_finished_at",
-                "last_error_message",
-                "last_notified_at",
-                "last_notified_signature",
-                "updated_at",
-            ]
-        )
+            mock_collect_alerts.return_value = [alert]
+            monitor.last_notified_signature = ScraperNotificationService.build_signature(alert)
+            monitor.save(
+                update_fields=[
+                    "last_status",
+                    "last_started_at",
+                    "last_finished_at",
+                    "last_error_message",
+                    "consecutive_failures",
+                    "last_notified_at",
+                    "last_notified_signature",
+                    "updated_at",
+                ]
+            )
 
-        sent = ScraperNotificationService.notify_active_alerts(now=now, monitors=[monitor])
-        self.assertEqual(sent, 0)
-        mock_post.assert_not_called()
+            decisions = ScraperNotificationService.collect_pending_notifications(
+                now=now,
+                monitors=[monitor],
+            )
+            self.assertEqual(decisions, [])
 
     @override_settings(
         SCRAPER_TELEGRAM_CHAT_IDS=["1001", "1002"],
@@ -1068,46 +1096,52 @@ class PurgeTelemetryEventsCommandTestCase(TestCase):
             ["1001", "1002"],
         )
 
-    @override_settings(
-        SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
-        SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
-    )
-    @patch("core.services.scraper_notification_service.requests.post")
-    def test_notify_active_alerts_force_ignores_cooldown(self, mock_post):
-        now = timezone.now()
-        monitor = ScraperHealthService.get_or_create_monitor("condor_animalitos")
-        monitor.last_status = ScraperHealth.Status.FAILED
-        monitor.last_started_at = now
-        monitor.last_finished_at = now
-        monitor.last_error_message = "condor parser failed"
-        monitor.last_notified_at = now
-        monitor.last_notified_signature = ScraperNotificationService.build_signature(
-            {
+    @patch.object(ScraperNotificationService, "_collect_alerts")
+    def test_notify_active_alerts_force_ignores_cooldown(
+        self,
+        mock_collect_alerts,
+    ):
+        with override_settings(
+            SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
+            SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
+        ):
+            now = timezone.now()
+            monitor = ScraperHealthService.get_or_create_monitor("condor_animalitos")
+            monitor.last_status = ScraperHealth.Status.FAILED
+            monitor.last_started_at = now
+            monitor.last_finished_at = now
+            monitor.last_error_message = "condor parser failed"
+            monitor.consecutive_failures = 1
+            monitor.last_notified_at = now
+            alert = {
                 "scraper_key": "condor_animalitos",
+                "label": "Animalitos Condor Gana",
                 "alert_kind": "failed_today",
                 "status": "failed",
                 "message": "condor parser failed",
                 "last_error_message": "condor parser failed",
                 "last_success_at": None,
+                "consecutive_failures": 1,
             }
-        )
-        monitor.save(
-            update_fields=[
-                "last_status",
-                "last_started_at",
-                "last_finished_at",
-                "last_error_message",
-                "last_notified_at",
-                "last_notified_signature",
-                "updated_at",
-            ]
-        )
+            mock_collect_alerts.return_value = [alert]
+            monitor.last_notified_signature = ScraperNotificationService.build_signature(alert)
+            monitor.save(
+                update_fields=[
+                    "last_status",
+                    "last_started_at",
+                    "last_finished_at",
+                    "last_error_message",
+                    "consecutive_failures",
+                    "last_notified_at",
+                    "last_notified_signature",
+                    "updated_at",
+                ]
+            )
 
-        sent = ScraperNotificationService.notify_active_alerts(
-            now=now,
-            monitors=[monitor],
-            force=True,
-        )
+            decisions = ScraperNotificationService.collect_pending_notifications(
+                now=now,
+                monitors=[monitor],
+                force=True,
+            )
 
-        self.assertEqual(sent, 1)
-        mock_post.assert_called_once()
+            self.assertEqual(len(decisions), 1)
