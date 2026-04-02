@@ -41,5 +41,4 @@ class SimulateScraperContingencyCommandTestCase(TestCase):
 
         incident = ScraperIncident.objects.get(scraper_key="lotoven_triples")
         self.assertEqual(incident.failure_reason_code, "missing_expected_group")
-        self.assertIn("telegram_dry_run", stdout.getvalue())
         self.assertIn("incident_created", stdout.getvalue())

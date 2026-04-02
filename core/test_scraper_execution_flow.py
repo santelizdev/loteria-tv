@@ -112,14 +112,14 @@ class ScraperExecutionFlowTestCase(TestCase):
         incident = ScraperIncident.objects.get(scraper_key="condor_animalitos")
         self.assertEqual(incident.status, ScraperIncident.Status.OPEN)
         self.assertEqual(incident.failure_reason_code, "command_failed")
-        self.assertTrue(incident.alert_sent)
-        self.assertIsNotNone(incident.alert_sent_at)
-        mock_post.assert_called_once()
+        self.assertFalse(incident.alert_sent)
+        self.assertIsNone(incident.alert_sent_at)
+        mock_post.assert_not_called()
 
         monitor = ScraperHealth.objects.get(scraper_key="condor_animalitos")
         self.assertEqual(monitor.last_status, ScraperHealth.Status.FAILED)
         self.assertIn("condor parser failed", monitor.last_error_message)
-        self.assertIsNotNone(monitor.last_notified_at)
+        self.assertIsNone(monitor.last_notified_at)
 
     @patch("core.services.scraper_notification_service.requests.post")
     @patch("core.services.scraper_health_service.call_command")
@@ -380,10 +380,10 @@ class ScraperExecutionFlowTestCase(TestCase):
             now=self.fixed_now,
         )
 
-        self.assertEqual(sent, 1)
+        self.assertEqual(sent, 0)
         incident.refresh_from_db()
-        self.assertTrue(incident.alert_sent)
-        mock_post.assert_called_once()
+        self.assertFalse(incident.alert_sent)
+        mock_post.assert_not_called()
 
     @override_settings(
         SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
@@ -420,11 +420,11 @@ class ScraperExecutionFlowTestCase(TestCase):
             now=self.fixed_now,
         )
 
-        self.assertEqual(sent, 1)
+        self.assertEqual(sent, 0)
         incident.refresh_from_db()
-        self.assertTrue(incident.alert_sent)
-        self.assertIsNotNone(incident.alert_sent_at)
-        mock_post.assert_called_once()
+        self.assertFalse(incident.alert_sent)
+        self.assertIsNone(incident.alert_sent_at)
+        mock_post.assert_not_called()
 
     @patch("core.services.scraper_notification_service.requests.post")
     @patch("core.services.scraper_health_service.call_command")
@@ -536,8 +536,8 @@ class ScraperExecutionFlowTestCase(TestCase):
         self.assertEqual(incident.contingency_stage, ScraperIncident.ContingencyStage.MANUAL_REQUIRED)
         self.assertEqual(incident.primary_attempt_count, PRIMARY_ATTEMPT_THRESHOLD)
         self.assertIsNotNone(incident.manual_enabled_at)
-        self.assertTrue(incident.alert_sent)
-        self.assertEqual(mock_post.call_count, 1)
+        self.assertFalse(incident.alert_sent)
+        self.assertEqual(mock_post.call_count, 0)
 
     @override_settings(
         SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
@@ -567,8 +567,8 @@ class ScraperExecutionFlowTestCase(TestCase):
         self.assertEqual(incident.contingency_stage, ScraperIncident.ContingencyStage.MANUAL_REQUIRED)
         self.assertEqual(incident.primary_attempt_count, PRIMARY_ATTEMPT_THRESHOLD)
         self.assertIsNotNone(incident.manual_enabled_at)
-        self.assertTrue(incident.alert_sent)
-        self.assertEqual(mock_post.call_count, 1)
+        self.assertFalse(incident.alert_sent)
+        self.assertEqual(mock_post.call_count, 0)
 
     @override_settings(
         SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
@@ -613,9 +613,9 @@ class ScraperExecutionFlowTestCase(TestCase):
         self.assertEqual(incident.fallback_attempt_count, 0)
         self.assertEqual(incident.fallback_scraper_key, TuAzarAnimalitoFallbackService.SCRAPER_KEY)
         self.assertIsNotNone(incident.fallback_activated_at)
-        self.assertTrue(incident.alert_sent)
+        self.assertFalse(incident.alert_sent)
         self.assertEqual(mock_run_fallback.call_count, 1)
-        self.assertEqual(mock_post.call_count, 1)
+        self.assertEqual(mock_post.call_count, 0)
 
     @override_settings(
         SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
@@ -660,6 +660,6 @@ class ScraperExecutionFlowTestCase(TestCase):
         self.assertEqual(incident.primary_attempt_count, PRIMARY_ATTEMPT_THRESHOLD)
         self.assertEqual(incident.fallback_attempt_count, FALLBACK_ATTEMPT_THRESHOLD)
         self.assertIsNotNone(incident.manual_enabled_at)
-        self.assertTrue(incident.alert_sent)
+        self.assertFalse(incident.alert_sent)
         self.assertEqual(mock_run_fallback.call_count, FALLBACK_ATTEMPT_THRESHOLD)
-        self.assertEqual(mock_post.call_count, 2)
+        self.assertEqual(mock_post.call_count, 0)

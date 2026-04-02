@@ -33,6 +33,14 @@ class Command(BaseCommand):
         force = bool(options["force"])
         dry_run = bool(options["dry_run"])
 
+        if not ScraperNotificationService.scraper_notifications_enabled():
+            self.stdout.write("scraper_notifications_enabled=False")
+            self.stdout.write("pending_health_notifications=0")
+            self.stdout.write("pending_incident_notifications=0")
+            if not dry_run:
+                self.stdout.write(self.style.WARNING("Scraper Telegram notifications are disabled."))
+            return
+
         monitors = None
         if scraper_keys:
             try:

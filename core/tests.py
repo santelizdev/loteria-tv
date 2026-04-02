@@ -326,6 +326,7 @@ class ScraperHealthServiceTestCase(TestCase):
 
 class ScraperNotificationServiceTestCase(TestCase):
     @override_settings(
+        SCRAPER_TELEGRAM_NOTIFICATIONS_ENABLED=True,
         SCRAPER_TELEGRAM_BOT_TOKEN="telegram-token",
         SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
     )
@@ -349,7 +350,12 @@ class ScraperNotificationServiceTestCase(TestCase):
             ]
         )
 
-        sent = ScraperNotificationService.notify_active_alerts(now=now, monitors=[monitor])
+        with patch.object(
+            ScraperNotificationService,
+            "scraper_notifications_enabled",
+            return_value=True,
+        ):
+            sent = ScraperNotificationService.notify_active_alerts(now=now, monitors=[monitor])
 
         self.assertEqual(sent, 1)
         mock_post.assert_called_once()
@@ -880,17 +886,14 @@ class AdminActivityNotificationSignalsTestCase(TestCase):
         SCRAPER_TELEGRAM_CHAT_IDS=["1001"],
     )
     @patch("core.services.scraper_notification_service.requests.post")
-    def test_login_notifies_when_explicitly_enabled(self, mock_post):
+    def test_login_notifications_stay_disabled_even_if_flag_is_enabled(self, mock_post):
         logged_in = self.client.login(username="root", password="secret123")
 
         self.assertTrue(logged_in)
-        self.assertEqual(mock_post.call_count, 1)
-        payload = mock_post.call_args.kwargs["json"]
-        self.assertIn("Inicio de sesion admin", payload["text"])
-        self.assertIn("Usuario: root", payload["text"])
+        mock_post.assert_not_called()
 
     @patch("core.services.scraper_notification_service.requests.post")
-    def test_telemetry_event_notifies(self, mock_post):
+    def test_telemetry_event_notifications_are_disabled(self, mock_post):
         DeviceTelemetryEvent.objects.create(
             device=self.device,
             event_type=DeviceTelemetryEvent.EventType.LOAD_ERROR,
@@ -898,11 +901,7 @@ class AdminActivityNotificationSignalsTestCase(TestCase):
             message="net::ERR_CONNECTION_TIMED_OUT",
         )
 
-        self.assertEqual(mock_post.call_count, 1)
-        payload = mock_post.call_args.kwargs["json"]
-        self.assertIn("Evento de telemetria", payload["text"])
-        self.assertIn("TV: OPS001", payload["text"])
-        self.assertIn("Tipo: LOAD_ERROR", payload["text"])
+        mock_post.assert_not_called()
 
 
 class ResultWindowServiceTestCase(TestCase):
@@ -1141,10 +1140,15 @@ class PurgeTelemetryEventsCommandTestCase(TestCase):
                 ]
             )
 
-            decisions = ScraperNotificationService.collect_pending_notifications(
-                now=now,
-                monitors=[monitor],
-            )
+            with patch.object(
+                ScraperNotificationService,
+                "scraper_notifications_enabled",
+                return_value=True,
+            ):
+                decisions = ScraperNotificationService.collect_pending_notifications(
+                    now=now,
+                    monitors=[monitor],
+                )
             self.assertEqual(decisions, [])
 
     @override_settings(
@@ -1200,10 +1204,15 @@ class PurgeTelemetryEventsCommandTestCase(TestCase):
                 ]
             )
 
-            decisions = ScraperNotificationService.collect_pending_notifications(
-                now=now,
-                monitors=[monitor],
-                force=True,
-            )
+            with patch.object(
+                ScraperNotificationService,
+                "scraper_notifications_enabled",
+                return_value=True,
+            ):
+                decisions = ScraperNotificationService.collect_pending_notifications(
+                    now=now,
+                    monitors=[monitor],
+                    force=True,
+                )
 
             self.assertEqual(len(decisions), 1)

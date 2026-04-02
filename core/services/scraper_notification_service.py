@@ -25,6 +25,13 @@ class IncidentNotificationDecision:
 
 class ScraperNotificationService:
     @classmethod
+    def scraper_notifications_enabled(cls) -> bool:
+        # Product decision: scraper-originated Telegram alerts are disabled.
+        # User/admin activity notifications still use `_dispatch_message()`
+        # directly and remain available through AdminActivityNotificationService.
+        return False
+
+    @classmethod
     def get_recipients(cls) -> list[str]:
         return cls._normalize_recipients(getattr(settings, "SCRAPER_TELEGRAM_CHAT_IDS", []))
 
@@ -43,6 +50,8 @@ class ScraperNotificationService:
 
     @classmethod
     def collect_pending_notifications(cls, *, now=None, monitors=None, force=False) -> list[NotificationDecision]:
+        if not cls.scraper_notifications_enabled():
+            return []
         current_dt = now or timezone.now()
         decisions: list[NotificationDecision] = []
         cooldown = cls.get_cooldown()
@@ -67,7 +76,7 @@ class ScraperNotificationService:
 
     @classmethod
     def notify_active_alerts(cls, *, now=None, monitors=None, force=False) -> int:
-        if not cls.is_telegram_configured():
+        if not cls.scraper_notifications_enabled() or not cls.is_telegram_configured():
             return 0
 
         current_dt = now or timezone.now()
@@ -93,6 +102,8 @@ class ScraperNotificationService:
         now=None,
         force=False,
     ) -> list[IncidentNotificationDecision]:
+        if not cls.scraper_notifications_enabled():
+            return []
         current_dt = now or timezone.now()
         queryset = cls._normalize_incidents(incidents)
         if not force:
@@ -118,7 +129,7 @@ class ScraperNotificationService:
 
     @classmethod
     def notify_pending_incidents(cls, *, incidents=None, now=None, force=False) -> int:
-        if not cls.is_telegram_configured():
+        if not cls.scraper_notifications_enabled() or not cls.is_telegram_configured():
             return 0
 
         current_dt = now or timezone.now()

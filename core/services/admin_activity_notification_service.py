@@ -56,39 +56,13 @@ class AdminActivityNotificationService:
 
     @classmethod
     def notify_user_login(cls, *, user, request) -> bool:
-        if not cls.is_enabled() or not cls.login_notifications_enabled():
-            return False
-        if not getattr(user, "is_staff", False):
-            return False
-
-        ip_address = cls._extract_ip(request)
-        lines = [
-            "LoteriaTV - Inicio de sesion admin",
-            f"Usuario: {getattr(user, 'username', '-')}",
-            f"IP: {ip_address or '-'}",
-            f"Ruta: {getattr(request, 'path', '-')}",
-        ]
-        ScraperNotificationService._dispatch_message("\n".join(lines))
-        return True
+        del user, request
+        return False
 
     @classmethod
     def notify_telemetry_event(cls, event: DeviceTelemetryEvent) -> bool:
-        if not cls.is_enabled():
-            return False
-
-        branch_name = event.device.branch.name if event.device.branch_id and event.device.branch else "-"
-        message = "\n".join(
-            [
-                "LoteriaTV - Evento de telemetria",
-                f"TV: {event.device.activation_code}",
-                f"Branch: {branch_name}",
-                f"Tipo: {event.event_type}",
-                f"IP: {event.ip_address or '-'}",
-                f"Mensaje: {(event.message or '-').strip() or '-'}",
-            ]
-        )
-        ScraperNotificationService._dispatch_message(message)
-        return True
+        del event
+        return False
 
     @classmethod
     def should_notify_log_entry(cls, log_entry: LogEntry) -> bool:

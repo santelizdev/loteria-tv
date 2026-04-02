@@ -64,6 +64,10 @@ SCRAPER_TELEGRAM_API_BASE_URL = (
     os.getenv("SCRAPER_TELEGRAM_API_BASE_URL", "https://api.telegram.org").strip()
     or "https://api.telegram.org"
 )
+SCRAPER_TELEGRAM_NOTIFICATIONS_ENABLED = _env_bool(
+    "SCRAPER_TELEGRAM_NOTIFICATIONS_ENABLED",
+    "0",
+)
 SCRAPER_ADMIN_BASE_URL = os.getenv("SCRAPER_ADMIN_BASE_URL", "").rstrip("/")
 SCRAPER_INCIDENT_VIEWER_GROUPS = [
     value.strip()
