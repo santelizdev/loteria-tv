@@ -119,6 +119,28 @@ def _resolve_target_date_for_animalitos() -> Optional[date]:
     return last_archive
 
 
+def _latest_available_date_for_requested_history(*, current_model, archive_model, requested_date: date) -> Optional[date]:
+    """
+    Cuando el cliente pide una fecha histórica exacta y no hubo transmisión ese día,
+    devolvemos el último día operativo disponible en current/archive <= requested_date.
+    """
+    current_last = current_model.objects.filter(draw_date__lte=requested_date).aggregate(last=Max("draw_date"))["last"]
+    archive_last = archive_model.objects.filter(draw_date__lte=requested_date).aggregate(last=Max("draw_date"))["last"]
+    candidates = [value for value in (current_last, archive_last) if value]
+    if not candidates:
+        return None
+    return max(candidates)
+
+
+def _apply_effective_date_headers(resp: Response, *, requested_date: Optional[date], effective_date: Optional[date]) -> Response:
+    if requested_date:
+        resp["X-Requested-Date"] = requested_date.isoformat()
+    if effective_date:
+        resp["X-Effective-Date"] = effective_date.isoformat()
+        resp["X-Results-Fallback"] = "1" if requested_date and effective_date != requested_date else "0"
+    return resp
+
+
 def get_client_ip(request) -> str:
     xff = request.META.get("HTTP_X_FORWARDED_FOR")
     if xff:
@@ -241,11 +263,21 @@ class CurrentResultsAPIView(APIView):
                 Response({"detail": "Invalid date format. Use YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
             )
 
+        requested_date = parsed or None
         target_date = parsed or _resolve_target_date_for_triples()
         if not target_date:
             return _apply_no_cache_headers(Response([], status=status.HTTP_200_OK))
 
         today = timezone.localdate()
+        if requested_date and requested_date < today:
+            fallback_date = _latest_available_date_for_requested_history(
+                current_model=CurrentResult,
+                archive_model=ResultArchive,
+                requested_date=requested_date,
+            )
+            if fallback_date:
+                target_date = fallback_date
+
         use_archive = target_date < today and ResultArchive.objects.filter(draw_date=target_date).exists()
 
         # -------------------------
@@ -291,7 +323,13 @@ class CurrentResultsAPIView(APIView):
         if not bypass_cache and ttl > 0:
             DeviceRedisService.set_cache(cache_key, data, ttl_seconds=ttl)
 
-        return _apply_no_cache_headers(Response(data, status=status.HTTP_200_OK))
+        response = Response(data, status=status.HTTP_200_OK)
+        response = _apply_effective_date_headers(
+            response,
+            requested_date=requested_date,
+            effective_date=target_date,
+        )
+        return _apply_no_cache_headers(response)
 
 
 class AnimalitosResultsAPIView(APIView):
@@ -323,11 +361,21 @@ class AnimalitosResultsAPIView(APIView):
                 Response({"detail": "Invalid date format. Use YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
             )
 
+        requested_date = parsed or None
         target_date = parsed or _resolve_target_date_for_animalitos()
         if not target_date:
             return _apply_no_cache_headers(Response([], status=status.HTTP_200_OK))
 
         today = timezone.localdate()
+        if requested_date and requested_date < today:
+            fallback_date = _latest_available_date_for_requested_history(
+                current_model=AnimalitoResult,
+                archive_model=AnimalitoArchive,
+                requested_date=requested_date,
+            )
+            if fallback_date:
+                target_date = fallback_date
+
         use_archive = target_date < today and AnimalitoArchive.objects.filter(draw_date=target_date).exists()
 
         # -------------------------
@@ -369,7 +417,13 @@ class AnimalitosResultsAPIView(APIView):
         if not bypass_cache and ttl > 0:
             DeviceRedisService.set_cache(cache_key, data, ttl_seconds=ttl)
 
-        return _apply_no_cache_headers(Response(data, status=status.HTTP_200_OK))
+        response = Response(data, status=status.HTTP_200_OK)
+        response = _apply_effective_date_headers(
+            response,
+            requested_date=requested_date,
+            effective_date=target_date,
+        )
+        return _apply_no_cache_headers(response)
 
 
 class CruzDailyContentAPIView(APIView):

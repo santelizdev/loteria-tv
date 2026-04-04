@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.db import OperationalError, connection, transaction
 from django.utils import timezone
@@ -21,8 +22,8 @@ class Command(BaseCommand):
         parser.add_argument(
             "--keep-archive-days",
             type=int,
-            default=1,
-            help="How many days to keep in archive tables (default: 1 = yesterday only).",
+            default=int(getattr(settings, "ARCHIVE_KEEP_DAYS", 7)),
+            help="How many days to keep in archive tables (default from settings, usually 7).",
         )
         parser.add_argument(
             "--vacuum",

@@ -190,6 +190,89 @@ class DeviceTelemetryAPITestCase(TestCase):
 
         self.assertEqual(response.status_code, 403)
 
+
+@override_settings(CACHES=TEST_CACHES, CHANNEL_LAYERS=TEST_CHANNEL_LAYERS)
+class HistoricalResultsFallbackAPITestCase(TestCase):
+    def setUp(self):
+        self.client_model = Client.objects.create(name="Cliente Historico")
+        self.branch = Branch.objects.create(
+            client=self.client_model,
+            name="Sucursal Historica",
+            is_active=True,
+            paid_until=timezone.now() + timedelta(days=30),
+        )
+        self.device = Device.objects.create(
+            device_id="tv-historica-001",
+            activation_code="HIST01",
+            is_active=True,
+            branch=self.branch,
+        )
+
+    def test_triples_api_falls_back_to_last_operational_archive_date(self):
+        provider = Provider.objects.create(
+            name="Trio Activo",
+            source_url="https://qa.example/trio-activo",
+            is_active=True,
+        )
+        today = timezone.localdate()
+        requested_yesterday = today - timedelta(days=1)
+        last_operational_day = today - timedelta(days=3)
+
+        ResultArchive.objects.create(
+            provider=provider,
+            draw_date=last_operational_day,
+            draw_time=datetime.strptime("08:00", "%H:%M").time(),
+            winning_number="161",
+            image_url="",
+            extra={},
+        )
+
+        response = self.client.get(
+            "/api/results/",
+            {"code": self.device.activation_code, "date": requested_yesterday.isoformat()},
+            REMOTE_ADDR="10.10.10.20",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["X-Requested-Date"], requested_yesterday.isoformat())
+        self.assertEqual(response["X-Effective-Date"], last_operational_day.isoformat())
+        self.assertEqual(response["X-Results-Fallback"], "1")
+        self.assertEqual(response.json()[0]["provider"], "Trio Activo")
+        self.assertEqual(response.json()[0]["number"], "161")
+
+    def test_animalitos_api_falls_back_to_last_operational_archive_date(self):
+        provider = Provider.objects.create(
+            name="Guacharito",
+            source_url="https://qa.example/guacharito",
+            is_active=True,
+        )
+        today = timezone.localdate()
+        requested_yesterday = today - timedelta(days=1)
+        last_operational_day = today - timedelta(days=3)
+
+        AnimalitoArchive.objects.create(
+            provider=provider,
+            draw_date=last_operational_day,
+            draw_time=datetime.strptime("08:30", "%H:%M").time(),
+            animal_number="47",
+            animal_name="Pavo Real",
+            animal_image_url="https://qa.example/pavo-real.jpg",
+            provider_logo_url="https://qa.example/guacharito-logo.jpg",
+        )
+
+        response = self.client.get(
+            "/api/animalitos/",
+            {"code": self.device.activation_code, "date": requested_yesterday.isoformat()},
+            REMOTE_ADDR="10.10.10.20",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["X-Requested-Date"], requested_yesterday.isoformat())
+        self.assertEqual(response["X-Effective-Date"], last_operational_day.isoformat())
+        self.assertEqual(response["X-Results-Fallback"], "1")
+        self.assertEqual(response.json()[0]["provider"], "Guacharito")
+        self.assertEqual(response.json()[0]["number"], "47")
+
     def test_load_success_updates_snapshot_without_persisting_event(self):
         response = self.client.post(
             "/api/devices/telemetry/",
@@ -998,7 +1081,7 @@ class DailyRetentionCommandTestCase(TestCase):
             [
                 call("archive_daily_triples", date="2026-03-19"),
                 call("archive_daily_animalitos", date="2026-03-19"),
-                call("enforce_retention", keep_archive_days=1),
+                call("enforce_retention", keep_archive_days=7),
             ],
         )
 
@@ -1051,7 +1134,7 @@ class DailyRetentionCommandTestCase(TestCase):
             provider_logo_url="",
         )
 
-        call_command("enforce_retention")
+        call_command("enforce_retention", keep_archive_days=1)
 
         self.assertEqual(
             list(ResultArchive.objects.order_by("draw_date").values_list("draw_date", flat=True)),

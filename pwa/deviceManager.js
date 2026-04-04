@@ -229,6 +229,8 @@ function DeviceManager(deviceId) {
   this.ws             = null;
   this.wsRetryAttempt = 0;
   this.wsRetryTimer   = null;
+  this.wsDisabledUntil = 0;
+  this.wsFallbackNoticeAt = 0;
 }
 
 DeviceManager.prototype.fetchContextOnce = function () {
@@ -301,6 +303,7 @@ DeviceManager.prototype.registerDevice = function () {
 DeviceManager.prototype.connectSocket = function () {
   var self = this;
   if (!self.activationCode) return;
+  if (Date.now() < self.wsDisabledUntil) return;
 
   if (
     self.ws &&
@@ -322,6 +325,8 @@ DeviceManager.prototype.connectSocket = function () {
   self.ws.onopen = function () {
     console.log("WebSocket conectado:", url);
     self.wsRetryAttempt = 0;
+    self.wsDisabledUntil = 0;
+    self.wsFallbackNoticeAt = 0;
   };
 
   self.ws.onmessage = function (ev) {
@@ -346,7 +351,16 @@ DeviceManager.prototype.scheduleReconnect = function () {
   var attempt = (self.wsRetryAttempt || 0) + 1;
   self.wsRetryAttempt = attempt;
 
-  var delay = Math.min(15000, 1000 * Math.pow(2, attempt - 1));
+  var delay = Math.min(300000, 1000 * Math.pow(2, attempt - 1));
+
+  if (attempt >= 5) {
+    self.wsDisabledUntil = Date.now() + 5 * 60 * 1000;
+    delay = 5 * 60 * 1000;
+    if (!self.wsFallbackNoticeAt || (Date.now() - self.wsFallbackNoticeAt) > (5 * 60 * 1000)) {
+      self.wsFallbackNoticeAt = Date.now();
+      console.warn("WebSocket no disponible; continuando con polling y reintentando luego.");
+    }
+  }
 
   if (self.wsRetryTimer) clearTimeout(self.wsRetryTimer);
 

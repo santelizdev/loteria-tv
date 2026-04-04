@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import BaseCommand
 from django.utils import timezone
@@ -16,8 +17,8 @@ class Command(BaseCommand):
         parser.add_argument(
             "--keep-archive-days",
             type=int,
-            default=1,
-            help="Dias a conservar en archive al aplicar retention (default: 1 = ayer).",
+            default=int(getattr(settings, "ARCHIVE_KEEP_DAYS", 7)),
+            help="Dias a conservar en archive al aplicar retention (default from settings, usually 7).",
         )
         parser.add_argument(
             "--skip-safety-checks",
@@ -43,4 +44,3 @@ class Command(BaseCommand):
         call_command("enforce_retention", **enforce_kwargs)
 
         self.stdout.write(self.style.SUCCESS("OK"))
-

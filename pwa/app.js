@@ -8,6 +8,7 @@
 
 var ROTATION_MS            = 40000;
 var RESULTS_REFRESH_MS     = 60000;
+var HISTORICAL_REFRESH_MS  = 30 * 60 * 1000;
 var ANIMALITOS_INTERVAL_MS = 40000;
 var CRUZ_DAILY_REFRESH_MS  = 10 * 60 * 1000;
 var NETWORK_TIMEOUT_MS     = 15000;
@@ -240,7 +241,9 @@ var inflightRefresh = {
   triples: null,
   animalitos: null,
   cruzDaily: null,
-  results: null
+  results: null,
+  currentResults: null,
+  historicalResults: null
 };
 
 function storageSet(key, value) {
@@ -1111,10 +1114,13 @@ function refreshTriplesCaches() {
     fetchTriplesByDate(getDateISO(0)),
     fetchTriplesByDate(getDateISO(-1)),
   ]).then(function (results) {
+    var cachedYesterday = readDatasetCache("triples:yesterday");
     state.triplesTodayRows     = results[0];
-    state.triplesYesterdayRows = results[1];
+    state.triplesYesterdayRows = results[1].length ? results[1] : cachedYesterday;
     saveDatasetCache("triples:today", state.triplesTodayRows);
-    saveDatasetCache("triples:yesterday", state.triplesYesterdayRows);
+    if (results[1].length || !cachedYesterday.length) {
+      saveDatasetCache("triples:yesterday", state.triplesYesterdayRows);
+    }
     return results;
   }).catch(function () {
     state.triplesTodayRows = readDatasetCache("triples:today");
@@ -1152,11 +1158,17 @@ function refreshAnimalitosCaches() {
     fetchAnimalitosByDate(getDateISO(0)),
     fetchAnimalitosByDate(getDateISO(-1)),
   ]).then(function (results) {
+    var cachedYesterday = readDatasetCache("animalitos:yesterday");
     state.animalitosTodayRows     = results[0];
-    state.animalitosYesterdayRows = results[1];
+    state.animalitosYesterdayRows = results[1].length ? results[1] : cachedYesterday;
     state.animalitosProviders     = computeProviders(results[0].concat(results[1]));
     saveDatasetCache("animalitos:today", state.animalitosTodayRows);
-    saveDatasetCache("animalitos:yesterday", state.animalitosYesterdayRows);
+    if (results[1].length || !cachedYesterday.length) {
+      saveDatasetCache("animalitos:yesterday", state.animalitosYesterdayRows);
+    }
+    state.animalitosProviders = computeProviders(
+      (state.animalitosTodayRows || []).concat(state.animalitosYesterdayRows || [])
+    );
     return results;
   }).catch(function () {
     state.animalitosTodayRows = readDatasetCache("animalitos:today");
@@ -1176,12 +1188,86 @@ function refreshAnimalitosCaches() {
   return inflightRefresh.animalitos;
 }
 
+function refreshCurrentResultCaches() {
+  if (inflightRefresh.currentResults) return inflightRefresh.currentResults;
+
+  inflightRefresh.currentResults = Promise.all([
+    fetchTriplesByDate(getDateISO(0)),
+    fetchAnimalitosByDate(getDateISO(0))
+  ]).then(function (results) {
+    state.triplesTodayRows = results[0];
+    state.animalitosTodayRows = results[1];
+    state.animalitosProviders = computeProviders(
+      (state.animalitosTodayRows || []).concat(state.animalitosYesterdayRows || [])
+    );
+    saveDatasetCache("triples:today", state.triplesTodayRows);
+    saveDatasetCache("animalitos:today", state.animalitosTodayRows);
+    return results;
+  }).catch(function () {
+    state.triplesTodayRows = readDatasetCache("triples:today");
+    state.animalitosTodayRows = readDatasetCache("animalitos:today");
+    state.animalitosProviders = computeProviders(
+      (state.animalitosTodayRows || []).concat(state.animalitosYesterdayRows || [])
+    );
+    return [state.triplesTodayRows, state.animalitosTodayRows];
+  }).then(function (results) {
+    inflightRefresh.currentResults = null;
+    return results;
+  }, function (error) {
+    inflightRefresh.currentResults = null;
+    throw error;
+  });
+
+  return inflightRefresh.currentResults;
+}
+
+function refreshHistoricalResultCaches() {
+  if (inflightRefresh.historicalResults) return inflightRefresh.historicalResults;
+
+  inflightRefresh.historicalResults = Promise.all([
+    fetchTriplesByDate(getDateISO(-1)),
+    fetchAnimalitosByDate(getDateISO(-1))
+  ]).then(function (results) {
+    var cachedTriplesYesterday = readDatasetCache("triples:yesterday");
+    var cachedAnimalitosYesterday = readDatasetCache("animalitos:yesterday");
+
+    state.triplesYesterdayRows = results[0].length ? results[0] : cachedTriplesYesterday;
+    state.animalitosYesterdayRows = results[1].length ? results[1] : cachedAnimalitosYesterday;
+    state.animalitosProviders = computeProviders(
+      (state.animalitosTodayRows || []).concat(state.animalitosYesterdayRows || [])
+    );
+
+    if (results[0].length || !cachedTriplesYesterday.length) {
+      saveDatasetCache("triples:yesterday", state.triplesYesterdayRows);
+    }
+    if (results[1].length || !cachedAnimalitosYesterday.length) {
+      saveDatasetCache("animalitos:yesterday", state.animalitosYesterdayRows);
+    }
+    return results;
+  }).catch(function () {
+    state.triplesYesterdayRows = readDatasetCache("triples:yesterday");
+    state.animalitosYesterdayRows = readDatasetCache("animalitos:yesterday");
+    state.animalitosProviders = computeProviders(
+      (state.animalitosTodayRows || []).concat(state.animalitosYesterdayRows || [])
+    );
+    return [state.triplesYesterdayRows, state.animalitosYesterdayRows];
+  }).then(function (results) {
+    inflightRefresh.historicalResults = null;
+    return results;
+  }, function (error) {
+    inflightRefresh.historicalResults = null;
+    throw error;
+  });
+
+  return inflightRefresh.historicalResults;
+}
+
 function refreshResultCaches() {
   if (inflightRefresh.results) return inflightRefresh.results;
 
   inflightRefresh.results = Promise.all([
-    refreshTriplesCaches(),
-    refreshAnimalitosCaches()
+    refreshCurrentResultCaches(),
+    refreshHistoricalResultCaches()
   ]).then(function (results) {
     inflightRefresh.results = null;
     return results;
@@ -1320,7 +1406,7 @@ function startRotation(durationMs) {
 // Treat it as a refresh signal so triples/animalitos always reload through
 // the same date-specific code path instead of mixing payload shapes.
 window.addEventListener("resultsUpdated", function (e) {
-  refreshResultCaches().then(function () {
+  refreshCurrentResultCaches().then(function () {
     render();
   }).catch(function () {});
 });
@@ -1361,7 +1447,8 @@ window.addEventListener("resultsUpdated", function (e) {
     .then(function () {
       setInterval(refreshStatusContext, 5 * 60 * 1000);
       setInterval(refreshCruzDailyCache, CRUZ_DAILY_REFRESH_MS);
-      setInterval(refreshResultCaches, RESULTS_REFRESH_MS);
+      setInterval(refreshCurrentResultCaches, RESULTS_REFRESH_MS);
+      setInterval(refreshHistoricalResultCaches, HISTORICAL_REFRESH_MS);
       render();
       startRotation(ROTATION_MS);
       reportTelemetry("LOAD_SUCCESS", {
