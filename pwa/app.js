@@ -590,6 +590,27 @@ function buildTripleCards(todayRows, yesterdayRows) {
     return m;
   }
 
+  function groupedHasAnyValue(payload) {
+    var dayKey;
+    var groupKey;
+    var slotKey;
+
+    if (!payload) return false;
+
+    for (dayKey in payload) {
+      if (!payload.hasOwnProperty(dayKey)) continue;
+      for (groupKey in payload[dayKey]) {
+        if (!payload[dayKey].hasOwnProperty(groupKey)) continue;
+        for (slotKey in payload[dayKey][groupKey]) {
+          if (!payload[dayKey][groupKey].hasOwnProperty(slotKey)) continue;
+          if (String(payload[dayKey][groupKey][slotKey] || "").trim()) return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
   function buildSingleRows(providerName) {
     var todayList = (singleToday[providerName] || []).sort(function (a, b) {
       return String(a.time).localeCompare(String(b.time));
@@ -624,12 +645,7 @@ function buildTripleCards(todayRows, yesterdayRows) {
   var basesPriority = ["Triple Caliente", "Triple Caracas", "Triple Tachira", "Triple Zamorano", "Triple Zulia"];
   for (i = 0; i < basesPriority.length; i++) {
     var bp = basesPriority[i];
-    if (!grouped[bp]) {
-      grouped[bp] = {
-        today: { A: {}, B: {}, C: {} },
-        yesterday: { A: {}, B: {}, C: {} }
-      };
-    }
+    if (!grouped[bp] || !groupedHasAnyValue(grouped[bp])) continue;
     cards.push({
       kind: "grouped",
       provider: bp,
@@ -642,7 +658,11 @@ function buildTripleCards(todayRows, yesterdayRows) {
   }
 
   var extraBases = [];
-  for (var k in grouped) if (grouped.hasOwnProperty(k)) extraBases.push(k);
+  for (var k in grouped) {
+    if (!grouped.hasOwnProperty(k)) continue;
+    if (!groupedHasAnyValue(grouped[k])) continue;
+    extraBases.push(k);
+  }
   extraBases.sort(function (a, b) { return a.localeCompare(b); });
   for (i = 0; i < extraBases.length; i++) {
     var eb = extraBases[i];
