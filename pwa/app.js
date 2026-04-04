@@ -7,7 +7,7 @@
 // ============================================
 
 var ROTATION_MS            = 40000;
-var ANIMALITOS_REFRESH_MS  = 60000;
+var RESULTS_REFRESH_MS     = 60000;
 var ANIMALITOS_INTERVAL_MS = 40000;
 var CRUZ_DAILY_REFRESH_MS  = 10 * 60 * 1000;
 var NETWORK_TIMEOUT_MS     = 15000;
@@ -239,7 +239,8 @@ var tickStart     = 0;
 var inflightRefresh = {
   triples: null,
   animalitos: null,
-  cruzDaily: null
+  cruzDaily: null,
+  results: null
 };
 
 function storageSet(key, value) {
@@ -1170,6 +1171,23 @@ function refreshAnimalitosCaches() {
   return inflightRefresh.animalitos;
 }
 
+function refreshResultCaches() {
+  if (inflightRefresh.results) return inflightRefresh.results;
+
+  inflightRefresh.results = Promise.all([
+    refreshTriplesCaches(),
+    refreshAnimalitosCaches()
+  ]).then(function (results) {
+    inflightRefresh.results = null;
+    return results;
+  }, function (error) {
+    inflightRefresh.results = null;
+    throw error;
+  });
+
+  return inflightRefresh.results;
+}
+
 function fetchCruzDailyContent() {
   var code = deviceManager.activationCode
     || localStorage.getItem("activation_code")
@@ -1320,8 +1338,14 @@ window.addEventListener("resultsUpdated", function (e) {
   var cards = buildTripleCards(state.triplesTodayRows || [], state.triplesYesterdayRows || []);
   state.triplesProviders = [];
   for (var ci = 0; ci < cards.length; ci++) state.triplesProviders.push(cards[ci].provider);
+  saveDatasetCache("triples:today", state.triplesTodayRows);
+  saveDatasetCache("triples:yesterday", state.triplesYesterdayRows);
 
   if (state.mode === "triples") render();
+
+  refreshAnimalitosCaches().then(function () {
+    if (state.mode === "animalitos") render();
+  }).catch(function () {});
 });
 
 // ---------- BOOT ----------
@@ -1352,19 +1376,15 @@ window.addEventListener("resultsUpdated", function (e) {
     })
     .then(function (ctx) {
       applyStatusContext(ctx);
-      return refreshTriplesCaches();
-    })
-    .then(function () {
-      setInterval(refreshStatusContext, 5 * 60 * 1000);
-      setInterval(refreshTriplesCaches, ANIMALITOS_REFRESH_MS);
       return Promise.all([
-        refreshAnimalitosCaches(),
+        refreshResultCaches(),
         refreshCruzDailyCache()
       ]);
     })
     .then(function () {
-      setInterval(refreshAnimalitosCaches, ANIMALITOS_REFRESH_MS);
+      setInterval(refreshStatusContext, 5 * 60 * 1000);
       setInterval(refreshCruzDailyCache, CRUZ_DAILY_REFRESH_MS);
+      setInterval(refreshResultCaches, RESULTS_REFRESH_MS);
       render();
       startRotation(ROTATION_MS);
       reportTelemetry("LOAD_SUCCESS", {

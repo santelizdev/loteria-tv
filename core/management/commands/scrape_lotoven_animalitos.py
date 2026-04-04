@@ -21,6 +21,7 @@ Guarda en BD:
 - AnimalitoResult (upsert por provider + draw_date + draw_time)
 """
 
+import os
 import re
 import time
 from datetime import datetime, date as date_cls, timedelta
@@ -50,6 +51,14 @@ from core.services.device_redis_service import DeviceRedisService
 PROVIDER_ALIASES = {
     "La-Ricachona": "La Ricachona",
 }
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
 
 def normalize_provider_name(raw: str) -> str:
@@ -115,8 +124,10 @@ class Command(BaseCommand):
     ANIMALITOS_URL = "https://lotoven.com/animalitos/"
     LAST_VISIBLE_HOUR = 19
 
-    HTML_CACHE_TTL_SECONDS = 10 * 60
-    GLOBAL_COOLDOWN_SECONDS = 10 * 60
+    # Beat corre cada 3 minutos; por defecto dejamos un TTL/cooldown corto para que
+    # el scraper no reutilice HTML viejo ni se salte casi todas las corridas.
+    HTML_CACHE_TTL_SECONDS = _int_env("LOTOVEN_ANIMALITOS_HTML_CACHE_TTL_SECONDS", 150)
+    GLOBAL_COOLDOWN_SECONDS = _int_env("LOTOVEN_ANIMALITOS_COOLDOWN_SECONDS", 150)
 
     USER_AGENT = (
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
