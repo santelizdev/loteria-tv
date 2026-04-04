@@ -914,6 +914,11 @@ function renderTriplesPage() {
 function renderAnimalitosGroup(day) {
   if (!gridEl) return;
 
+  var hasToday = !!((state.animalitosTodayRows || []).length);
+  var hasYesterday = !!((state.animalitosYesterdayRows || []).length);
+  if (day === "yesterday" && !hasYesterday && hasToday) day = "today";
+  if (day === "today" && !hasToday && hasYesterday) day = "yesterday";
+
   var rows = (day === "today")
     ? state.animalitosTodayRows
     : state.animalitosYesterdayRows;
@@ -1284,14 +1289,16 @@ function startRotation(durationMs) {
     // Modo animalitos
     var groups2      = chunk(state.animalitosProviders, ANIMALITOS_GROUP_SIZE);
     var totalGroups2 = Math.max(1, groups2.length);
+    var hasAnimalitosToday = !!((state.animalitosTodayRows || []).length);
+    var hasAnimalitosYesterday = !!((state.animalitosYesterdayRows || []).length);
 
-    if (state.animalitosDay === "today") {
+    if (state.animalitosDay === "today" && hasAnimalitosYesterday) {
       state.animalitosDay = "yesterday";
       render();
       return;
     }
 
-    // Estábamos en "yesterday". Si aún quedan grupos, avanzamos al siguiente.
+    // Si AYER no tiene filas, avanzamos directo al siguiente grupo en HOY.
     if (state.animalitosGroupIndex + 1 < totalGroups2) {
       state.animalitosGroupIndex += 1;
       state.animalitosDay = "today";
@@ -1310,41 +1317,11 @@ function startRotation(durationMs) {
 }
 
 // resultsUpdated: fired by WebSocket push (real-time update for TODAY only)
-// We only update triplesTodayRows here — yesterday comes from refreshTriplesCaches()
+// Treat it as a refresh signal so triples/animalitos always reload through
+// the same date-specific code path instead of mixing payload shapes.
 window.addEventListener("resultsUpdated", function (e) {
-  var d = e.detail;
-
-  if (Array.isArray(d)) {
-    state.triplesTodayRows = normalizeTriples(d);
-  }
-
-  if (d && typeof d === "object" && !Array.isArray(d)) {
-    if (Array.isArray(d.today))   state.triplesTodayRows = normalizeTriples(d.today);
-    if (Array.isArray(d.results)) state.triplesTodayRows = normalizeTriples(d.results);
-    if (d.triples) {
-      if (Array.isArray(d.triples)) {
-        state.triplesTodayRows = normalizeTriples(d.triples);
-      } else if (typeof d.triples === "object" && Array.isArray(d.triples.today)) {
-        state.triplesTodayRows = normalizeTriples(d.triples.today);
-      }
-    }
-    // yesterday from WS push (bonus — if backend ever sends it)
-    if (Array.isArray(d.yesterday)) state.triplesYesterdayRows = normalizeTriples(d.yesterday);
-    if (d.triples && typeof d.triples === "object" && Array.isArray(d.triples.yesterday)) {
-      state.triplesYesterdayRows = normalizeTriples(d.triples.yesterday);
-    }
-  }
-
-  var cards = buildTripleCards(state.triplesTodayRows || [], state.triplesYesterdayRows || []);
-  state.triplesProviders = [];
-  for (var ci = 0; ci < cards.length; ci++) state.triplesProviders.push(cards[ci].provider);
-  saveDatasetCache("triples:today", state.triplesTodayRows);
-  saveDatasetCache("triples:yesterday", state.triplesYesterdayRows);
-
-  if (state.mode === "triples") render();
-
-  refreshAnimalitosCaches().then(function () {
-    if (state.mode === "animalitos") render();
+  refreshResultCaches().then(function () {
+    render();
   }).catch(function () {});
 });
 
