@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 from tempfile import NamedTemporaryFile
 from unittest.mock import call, patch
 
+from bs4 import BeautifulSoup
 from django.contrib.admin.models import ADDITION, CHANGE, DELETION, LogEntry
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
@@ -14,6 +15,7 @@ from django.core.management import call_command
 from django.urls import reverse
 from django.utils import timezone
 
+from core.management.commands.scrape_condor_animalitos import Command as CondorScraperCommand
 from core.models import (
     AnimalitoArchive,
     AnimalitoResult,
@@ -111,6 +113,128 @@ class TuAzarAnimalitoFallbackServiceTestCase(TestCase):
         self.assertEqual(rows[0]["animal_number"], "21")
         self.assertEqual(rows[0]["animal_name"], "Gallo")
         self.assertEqual(rows[0]["draw_time_obj"].strftime("%H:%M"), "08:30")
+
+
+class CondorAnimalitosCommandTestCase(TestCase):
+    def test_parse_weekly_table_uses_target_date_column(self):
+        html = """
+        <div class="card">
+          <div class="table-responsive">
+            <table class="table">
+              <thead class="thead-light">
+                <tr>
+                  <th scope="col">Sorteo</th>
+                  <th scope="col">Lunes <small class="d-block small fw-bold">06/04/26</small></th>
+                  <th scope="col">Domingo <small class="d-block small fw-bold">05/04/26</small></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row" class="fw-bold">9:00 am</th>
+                  <td align="center">62 <br><small>Cachicamo</small></td>
+                  <td align="center">35 <br><small>Jirafa</small></td>
+                </tr>
+                <tr>
+                  <th scope="row" class="fw-bold">2:00 pm</th>
+                  <td align="center">14 <br><small>Paloma</small></td>
+                  <td align="center">-</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        """
+
+        rows = CondorScraperCommand()._parse_weekly_table(
+            BeautifulSoup(html, "html.parser"),
+            target_date=date(2026, 4, 6),
+        )
+
+        self.assertEqual([row["draw_time_obj"].strftime("%H:%M") for row in rows], ["09:00", "14:00"])
+        self.assertEqual(rows[0]["number"], "62")
+        self.assertEqual(rows[0]["animal"], "Cachicamo")
+        self.assertEqual(
+            rows[1]["image"],
+            "https://www.lottoresultados.com/img/animalitos_webp_120x120/CondorGana/14.webp",
+        )
+
+    @patch("core.management.commands.scrape_condor_animalitos.get_business_cutoff_time")
+    @patch("core.management.commands.scrape_condor_animalitos.Command._fetch_html")
+    def test_command_persists_rows_from_weekly_table_when_daily_block_is_incomplete(
+        self,
+        mock_fetch_html,
+        mock_cutoff_time,
+    ):
+        mock_cutoff_time.return_value = datetime.strptime("19:00", "%H:%M").time()
+        mock_fetch_html.return_value = """
+        <div id="resultado-de-condor-gana-de-hoy">
+          <ul class="step mx-auto">
+            <li class="step-item">
+              <div class="step-content-wrapper">
+                <div class="step-avatar step-avatar-lg position-relative">
+                  <img src="/img/animalitos_webp_120x120/CondorGana/62.webp">
+                </div>
+                <div class="step-content">
+                  <h4>9:00 am</h4>
+                  <p class="step-text my-0 fw-bold">62 Cachicamo</p>
+                </div>
+              </div>
+            </li>
+            <li class="step-item">
+              <div class="step-content-wrapper">
+                <div class="step-avatar step-avatar-lg position-relative">
+                  <img src="/img/huella-animal.webp">
+                </div>
+                <div class="step-content">
+                  <h4>2:00 pm</h4>
+                  <p class="step-text my-0 fw-bold">Pendiente</p>
+                </div>
+              </div>
+            </li>
+          </ul>
+        </div>
+        <div class="card">
+          <div class="table-responsive">
+            <table class="table">
+              <thead class="thead-light">
+                <tr>
+                  <th scope="col">Sorteo</th>
+                  <th scope="col">Lunes <small class="d-block small fw-bold">06/04/26</small></th>
+                  <th scope="col">Domingo <small class="d-block small fw-bold">05/04/26</small></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row" class="fw-bold">9:00 am</th>
+                  <td align="center">62 <br><small>Cachicamo</small></td>
+                  <td align="center">35 <br><small>Jirafa</small></td>
+                </tr>
+                <tr>
+                  <th scope="row" class="fw-bold">2:00 pm</th>
+                  <td align="center">14 <br><small>Paloma</small></td>
+                  <td align="center">-</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        """
+
+        with patch("core.management.commands.scrape_condor_animalitos.timezone.localdate", return_value=date(2026, 4, 6)):
+            call_command("scrape_condor_animalitos", date="2026-04-06")
+
+        provider = Provider.objects.get(name="Condor Gana")
+        rows = list(
+            AnimalitoResult.objects.filter(provider=provider, draw_date=date(2026, 4, 6)).order_by("draw_time")
+        )
+
+        self.assertEqual([row.draw_time.strftime("%H:%M") for row in rows], ["09:00", "14:00"])
+        self.assertEqual(rows[1].animal_number, "14")
+        self.assertEqual(rows[1].animal_name, "Paloma")
+        self.assertEqual(
+            rows[1].animal_image_url,
+            "https://www.lottoresultados.com/img/animalitos_webp_120x120/CondorGana/14.webp",
+        )
 
 
 @override_settings(CACHES=TEST_CACHES, CHANNEL_LAYERS=TEST_CHANNEL_LAYERS)

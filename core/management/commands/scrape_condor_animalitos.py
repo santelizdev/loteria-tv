@@ -24,10 +24,24 @@ from core.services.result_window_service import (
 
 SOURCE_URL = "https://www.lottoresultados.com/resultados/animalitos/condor-gana"
 BASE_URL = "https://www.lottoresultados.com"
+CONDOR_IMAGE_URL_TEMPLATE = "/img/animalitos_webp_120x120/CondorGana/{number}.webp"
 
 
 TIME_RE = re.compile(r"^\s*(\d{1,2}):(\d{2})\s*(am|pm)\s*$", re.IGNORECASE)
 LINE_RE = re.compile(r"^\s*(\d{1,2})\s+(.+?)\s*$")  # "62 Cachicamo"
+PLACEHOLDER_VALUES = {"", "-", "pendiente", "proximo", "próximo"}
+
+
+def _normalize_space(value: str) -> str:
+    return " ".join(str(value or "").split()).strip()
+
+
+def _is_placeholder_value(value: str) -> bool:
+    return _normalize_space(value).lower() in PLACEHOLDER_VALUES
+
+
+def _build_condor_image_url(number: str) -> str:
+    return urljoin(BASE_URL, CONDOR_IMAGE_URL_TEMPLATE.format(number=str(number).strip()))
 
 
 def _parse_time_12h(text: str):
@@ -94,25 +108,9 @@ class Command(BaseCommand):
         html = self._fetch_html(timeout=timeout)
         soup = BeautifulSoup(html, "html.parser")
 
-        # Bloques: hoy / ayer
-        block_id = (
-            "resultado-de-condor-gana-de-hoy"
-            if target_date == today
-            else None  # el de ayer no tiene id fijo en tu dump, pero es el siguiente col-sm-6
-        )
-
-        rows = []
-        if target_date == today:
-            block = soup.select_one(f"#{block_id}")
-            if not block:
-                raise CommandError("No se encontró el bloque de HOY en el HTML.")
-            rows = self._parse_step_list(block)
-        else:
-            # “Resultados de Ayer” está en el segundo .col-sm-6 del mismo row.
-            cols = soup.select(".row > .col-sm-6")
-            if len(cols) < 2:
-                raise CommandError("No se encontró el bloque de AYER en el HTML.")
-            rows = self._parse_step_list(cols[1])
+        rows = self._parse_weekly_table(soup, target_date=target_date)
+        if not rows:
+            rows = self._parse_daily_block(soup, target_date=target_date, today=today)
 
         # invalidación cache ANIMALITOS (para TVs)
         DeviceRedisService.delete_pattern("results:animalitos:*")
@@ -175,6 +173,83 @@ class Command(BaseCommand):
         resp.raise_for_status()
         return resp.text
 
+    def _parse_weekly_table(self, soup, *, target_date) -> list[dict]:
+        target_label = target_date.strftime("%d/%m/%y")
+
+        for table in soup.select("table.table"):
+            header_cells = table.select("thead tr th")
+            if len(header_cells) < 2:
+                continue
+
+            target_index = None
+            for index, cell in enumerate(header_cells[1:], start=1):
+                small = cell.select_one("small")
+                date_label = _normalize_space(small.get_text(" ", strip=True) if small else "")
+                if date_label == target_label:
+                    target_index = index
+                    break
+
+            if target_index is None:
+                continue
+
+            out: list[dict] = []
+            for row in table.select("tbody tr"):
+                cells = row.find_all(["th", "td"], recursive=False)
+                if len(cells) <= target_index:
+                    continue
+
+                time_label = _normalize_space(cells[0].get_text(" ", strip=True))
+                draw_time = _parse_time_12h(time_label)
+                if not draw_time:
+                    continue
+
+                raw_parts = [
+                    _normalize_space(part)
+                    for part in cells[target_index].stripped_strings
+                    if _normalize_space(part)
+                ]
+                if not raw_parts:
+                    continue
+
+                joined_value = " ".join(raw_parts)
+                if _is_placeholder_value(joined_value):
+                    continue
+
+                match = LINE_RE.match(joined_value)
+                if not match:
+                    continue
+
+                number = match.group(1)
+                animal = match.group(2).strip()
+                out.append(
+                    {
+                        "time": time_label,
+                        "draw_time_obj": draw_time,
+                        "number": number,
+                        "animal": animal,
+                        "image": _build_condor_image_url(number),
+                    }
+                )
+
+            if out:
+                return out
+
+        return []
+
+    def _parse_daily_block(self, soup, *, target_date, today) -> list[dict]:
+        if target_date == today:
+            block = soup.select_one("#resultado-de-condor-gana-de-hoy")
+            return self._parse_step_list(block) if block else []
+
+        block = soup.select_one("#resultado-de-condor-gana-de-ayer")
+        if block:
+            return self._parse_step_list(block)
+
+        cols = soup.select(".row > .col-sm-6")
+        if len(cols) >= 2:
+            return self._parse_step_list(cols[1])
+        return []
+
     def _parse_step_list(self, container) -> list[dict]:
         """
         Formato observado:
@@ -186,6 +261,8 @@ class Command(BaseCommand):
         La fila final puede ser "Próximo" y se ignora. :contentReference[oaicite:2]{index=2}
         """
         out: list[dict] = []
+        if not container:
+            return out
 
         items = container.select("ul.step li.step-item")
         for it in items:
@@ -197,7 +274,7 @@ class Command(BaseCommand):
             line_raw = line_txt.get_text(" ", strip=True) if line_txt else ""
 
             # Ignorar "Próximo" o vacíos
-            if not line_raw or "próximo" in line_raw.lower() or "proximo" in line_raw.lower():
+            if _is_placeholder_value(line_raw):
                 continue
 
             draw_time = _parse_time_12h(t_raw)
@@ -212,7 +289,7 @@ class Command(BaseCommand):
             animal = m.group(2).strip()  # "Cachicamo" / "León"
 
             src = (img.get("src") if img else "") or ""
-            image_url = urljoin(BASE_URL, src)
+            image_url = urljoin(BASE_URL, src) if src else _build_condor_image_url(number)
 
             out.append(
                 {
