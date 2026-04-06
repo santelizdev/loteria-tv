@@ -16,3 +16,4 @@ from .scraper_incident import ScraperIncident
 from .manual_result_intervention import ManualResultIntervention
 from .weekly_device_report import WeeklyDeviceReport
 from .cruz_daily_content import CruzDailyContent
+from .display_settings import DisplaySettings

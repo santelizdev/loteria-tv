@@ -23,6 +23,7 @@ from core.models import (
     CurrentResult,
     Device,
     DeviceTelemetryEvent,
+    DisplaySettings,
     ResultArchive,
 )
 from core.services.device_redis_service import DeviceRedisService
@@ -615,12 +616,15 @@ class DeviceStatusAPIView(APIView):
                 except Exception:
                     client_logo_url = ""
 
+        display_settings = DisplaySettings.get_solo()
+
         return _apply_no_cache_headers(
             Response(
                 {
                     "is_active": bool(device.is_active and device.branch_id),
                     "branch_id": device.branch_id,
                     "client_logo_url": client_logo_url,
+                    "rotation_seconds": int(display_settings.rotation_seconds or 40),
                 },
                 status=status.HTTP_200_OK,
             )

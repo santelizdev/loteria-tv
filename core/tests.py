@@ -26,6 +26,7 @@ from core.models import (
     Device,
     DeviceTelemetryEvent,
     DeviceTelemetrySnapshot,
+    DisplaySettings,
     Provider,
     ResultArchive,
     ScraperExecution,
@@ -313,6 +314,30 @@ class DeviceTelemetryAPITestCase(TestCase):
         )
 
         self.assertEqual(response.status_code, 403)
+
+    def test_status_endpoint_returns_default_rotation_seconds(self):
+        response = self.client.get(
+            "/api/devices/status/",
+            {"code": self.device.activation_code},
+            REMOTE_ADDR="10.10.10.20",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["rotation_seconds"], 40)
+
+    def test_status_endpoint_returns_configured_rotation_seconds(self):
+        settings_obj = DisplaySettings.get_solo()
+        settings_obj.rotation_seconds = 30
+        settings_obj.save()
+
+        response = self.client.get(
+            "/api/devices/status/",
+            {"code": self.device.activation_code},
+            REMOTE_ADDR="10.10.10.20",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["rotation_seconds"], 30)
 
 
 @override_settings(CACHES=TEST_CACHES, CHANNEL_LAYERS=TEST_CHANNEL_LAYERS)

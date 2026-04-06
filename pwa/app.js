@@ -6,10 +6,11 @@
 // - index.html debe cargar: config.js → deviceManager.js → app.js (sin type="module")
 // ============================================
 
-var ROTATION_MS            = 40000;
+var DEFAULT_ROTATION_MS    = 40000;
+var ROTATION_MS            = DEFAULT_ROTATION_MS;
 var RESULTS_REFRESH_MS     = 60000;
 var HISTORICAL_REFRESH_MS  = 30 * 60 * 1000;
-var ANIMALITOS_INTERVAL_MS = 40000;
+var ANIMALITOS_INTERVAL_MS = DEFAULT_ROTATION_MS;
 var CRUZ_DAILY_REFRESH_MS  = 10 * 60 * 1000;
 var NETWORK_TIMEOUT_MS     = 15000;
 var GROUPED_SLOT_TOLERANCE_MINUTES = 15;
@@ -1036,6 +1037,28 @@ function reportWebViewInfo(options) {
   return client.reportWebViewInfo(options || {});
 }
 
+function getCurrentRotationMs() {
+  return state.mode === "animalitos" ? ANIMALITOS_INTERVAL_MS : ROTATION_MS;
+}
+
+function applyRotationSeconds(rotationSeconds) {
+  var seconds = Number(rotationSeconds);
+  var rotationMs = DEFAULT_ROTATION_MS;
+  var changed = false;
+
+  if (!isNaN(seconds) && seconds > 0) {
+    rotationMs = Math.round(seconds * 1000);
+  }
+
+  changed = ROTATION_MS !== rotationMs || ANIMALITOS_INTERVAL_MS !== rotationMs;
+  ROTATION_MS = rotationMs;
+  ANIMALITOS_INTERVAL_MS = rotationMs;
+
+  if (changed && rotationTimer) {
+    startRotation(getCurrentRotationMs());
+  }
+}
+
 function applyStatusContext(ctx) {
   var safe = ctx || {};
   var logoUrl = safe.client_logo_url
@@ -1044,9 +1067,12 @@ function applyStatusContext(ctx) {
         ? window.__APP_CONFIG__.CLIENT_LOGO
         : "");
 
+  applyRotationSeconds(safe.rotation_seconds);
+
   setClientLogo(logoUrl);
   console.log("status ctx:", safe);
   console.log("client_logo_url:", safe.client_logo_url || null);
+  console.log("rotation_seconds:", safe.rotation_seconds || null);
 }
 
 function refreshStatusContext() {

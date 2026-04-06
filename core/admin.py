@@ -16,4 +16,5 @@ from .admin_configs import (  # noqa: F401
     scraper_health,
     weekly_device_report,
     cruz_daily_content,
+    display_settings,
 )
