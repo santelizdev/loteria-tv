@@ -453,7 +453,7 @@ DeviceManager.prototype.startResultsPolling = function () {
 
   self.resultsInterval = setInterval(function () {
     fetch(
-      apiBase + ENDPOINTS.results + "?code=" + encodeURIComponent(self.activationCode),
+      apiBase + ENDPOINTS.results + "?code=" + encodeURIComponent(self.activationCode) + "&nocache=1",
           { cache: "no-store" }
     ).then(function (res) {
         if (!res.ok) return;
@@ -473,7 +473,7 @@ DeviceManager.prototype.fetchResultsOnce = function () {
   var apiBase = getApiBase();
 
   return fetch(
-    apiBase + ENDPOINTS.results + "?code=" + encodeURIComponent(self.activationCode),
+    apiBase + ENDPOINTS.results + "?code=" + encodeURIComponent(self.activationCode) + "&nocache=1",
         { cache: "no-store" }
   ).then(function (res) {
       if (!res.ok) return;

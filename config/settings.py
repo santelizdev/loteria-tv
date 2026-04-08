@@ -210,11 +210,11 @@ CELERY_BEAT_SCHEDULE = {
     },
     "scrape_tuazar_triples_every_3_minutes": {
         "task": "core.tasks.scrape_tuazar_triples",
-        "schedule": crontab(minute="1-59/3", hour="8-22"),
+        "schedule": crontab(minute="*/3", hour="8-22"),
     },
     "scrape_animalitos_every_3_minutes": {
         "task": "core.tasks.scrape_animalitos",
-        "schedule": crontab(minute="2-59/3", hour="8-22"),
+        "schedule": crontab(minute="*/3", hour="8-22"),
     },
     "scrape_condor_animalitos_every_3_minutes": {
         "task": "core.tasks.scrape_condor_animalitos",

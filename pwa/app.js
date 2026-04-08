@@ -26,6 +26,17 @@ var SLOTS = (function () {
   return out;
 })();
 
+function buildSlotsRange(startHour, endHour, minute) {
+  var out = [];
+  var mm = Number(minute || 0);
+  for (var h = startHour; h <= endHour; h++) {
+    out.push(
+      (h < 10 ? "0" : "") + h + ":" + (mm < 10 ? "0" : "") + mm
+    );
+  }
+  return out;
+}
+
 var deviceManager = new DeviceManager(
   typeof DEVICE_ID !== "undefined" ? DEVICE_ID : null
 );
@@ -347,7 +358,7 @@ function normalizeAnimalitos(raw) {
   var list = raw || [];
   for (var i = 0; i < list.length; i++) {
     var r    = list[i];
-    var slot = timeToHourSlot(r.time);
+    var slot = timeToMinuteSlot(r.time);
     if (!slot) continue;
     var providerName = normalizeAnimalitosProviderName(
       String(r.provider !== null && r.provider !== undefined ? r.provider : "").trim()
@@ -435,6 +446,20 @@ var ANIMALITOS_PROVIDER_ORDER = {
   "SelvaPlus": 10
 };
 
+var ANIMALITOS_PROVIDER_SLOTS = {
+  "Guacharito": buildSlotsRange(8, 19, 30),
+  "Guacharo": buildSlotsRange(8, 19, 0),
+  "Cazaloton": buildSlotsRange(9, 19, 0),
+  "La Granjita": buildSlotsRange(8, 19, 0),
+  "Loto Chaima": buildSlotsRange(8, 19, 0),
+  "Lotto Activo": buildSlotsRange(8, 19, 0),
+  "Lotto Activo Interl": buildSlotsRange(8, 19, 30),
+  "Lotto Rey": buildSlotsRange(8, 19, 30),
+  "Mega Animal 40": buildSlotsRange(9, 20, 0),
+  "Condor Gana": buildSlotsRange(9, 19, 0),
+  "SelvaPlus": buildSlotsRange(8, 19, 0)
+};
+
 var TRIPLE_CARD_ORDER = {
   "Triple Caliente": 0,
   "Triple Caracas": 1,
@@ -465,6 +490,25 @@ function computeProviders(rows) {
     if (!ha && hb) return 1;
     return a.localeCompare(b);
   });
+}
+
+function getAnimalitosSlotsForProvider(provider, rows) {
+  var predefined = ANIMALITOS_PROVIDER_SLOTS[provider];
+  if (predefined && predefined.length) return predefined.slice();
+
+  var seen = {};
+  var out = [];
+  var list = rows || [];
+  for (var i = 0; i < list.length; i++) {
+    var row = list[i] || {};
+    if (row.provider !== provider || !row.time || seen[row.time]) continue;
+    seen[row.time] = true;
+    out.push(row.time);
+  }
+  out.sort(function (a, b) {
+    return _timeToMinutes(a) - _timeToMinutes(b);
+  });
+  return out;
 }
 
 function parseTripleGroupProvider(name) {
@@ -759,6 +803,145 @@ function mapRowsByProvider(rows, provider) {
   return m;
 }
 
+function buildAnimalIconHtml(primaryUrl, fallbackUrl) {
+  var primary = String(primaryUrl || "").trim();
+  var fallback = String(fallbackUrl || "").trim();
+  var initial = primary || fallback;
+
+  if (!initial || state.lowMemoryMode) return "";
+
+  if (fallback && fallback !== initial) {
+    return (
+      '<img class="col__icon' + (primary ? "" : " col__icon--pending") + '" ' +
+      'src="' + esc(initial) + '" alt="" decoding="async" data-fallback="' + esc(fallback) + '" ' +
+      'onerror="var f=this.getAttribute(\'data-fallback\');if(f&&this.src!==f){this.src=f;this.className=\'col__icon col__icon--pending\';this.onerror=null;return;}this.style.display=\'none\';" />'
+    );
+  }
+
+  return (
+    '<img class="col__icon' + (primary ? "" : " col__icon--pending") + '" ' +
+    'src="' + esc(initial) + '" alt="" decoding="async" onerror="this.style.display=\'none\';" />'
+  );
+}
+
+function buildTriplesRecordSignature(row) {
+  var rec = row || {};
+  return String(rec.number || "").trim();
+}
+
+function buildAnimalitosRecordSignature(row) {
+  var rec = row || {};
+  return [
+    String(rec.number || "").trim(),
+    String(rec.animal || "").trim(),
+    String(rec.image || "").trim(),
+    String(rec.provider_logo_url || "").trim()
+  ].join("|");
+}
+
+function collectChangedRows(previousRows, nextRows, mode) {
+  var prevByKey = {};
+  var out = [];
+  var i;
+
+  for (i = 0; i < (previousRows || []).length; i++) {
+    var prev = previousRows[i] || {};
+    prevByKey[String(prev.provider || "") + "|" + String(prev.time || "")] =
+      mode === "animalitos"
+        ? buildAnimalitosRecordSignature(prev)
+        : buildTriplesRecordSignature(prev);
+  }
+
+  for (i = 0; i < (nextRows || []).length; i++) {
+    var next = nextRows[i] || {};
+    var key = String(next.provider || "") + "|" + String(next.time || "");
+    var signature = mode === "animalitos"
+      ? buildAnimalitosRecordSignature(next)
+      : buildTriplesRecordSignature(next);
+    if (prevByKey[key] === signature) continue;
+    out.push({
+      mode: mode,
+      provider: String(next.provider || ""),
+      time: String(next.time || "")
+    });
+  }
+
+  return out;
+}
+
+function normalizeTripleFocusProvider(providerName) {
+  var name = String(providerName || "").trim();
+  var parsed = parseTripleGroupProvider(name);
+
+  if (parsed && (
+    parsed.base === "Triple Caracas" ||
+    parsed.base === "Triple Tachira" ||
+    parsed.base === "Triple Zulia" ||
+    parsed.base === "Triple Caliente" ||
+    parsed.base === "Triple Zamorano"
+  )) {
+    return parsed.base;
+  }
+
+  if (name === "Triple Gana" || name === "Super Gana") {
+    return "Triple Gana / Super Gana";
+  }
+
+  return name;
+}
+
+function findTripleGroupIndexForProvider(providerName) {
+  var focusProvider = normalizeTripleFocusProvider(providerName);
+  var cards = buildTripleCards(state.triplesTodayRows || [], state.triplesYesterdayRows || []);
+  var groups = chunk(cards, TRIPLES_GROUP_SIZE);
+
+  for (var gi = 0; gi < groups.length; gi++) {
+    var group = groups[gi] || [];
+    for (var ci = 0; ci < group.length; ci++) {
+      if (group[ci].provider === focusProvider) return gi;
+    }
+  }
+
+  return 0;
+}
+
+function findAnimalitosGroupIndexForProvider(providerName) {
+  var groups = chunk(state.animalitosProviders || [], ANIMALITOS_GROUP_SIZE);
+
+  for (var gi = 0; gi < groups.length; gi++) {
+    var group = groups[gi] || [];
+    for (var pi = 0; pi < group.length; pi++) {
+      if (group[pi] === providerName) return gi;
+    }
+  }
+
+  return 0;
+}
+
+function focusLatestChangedResult(changedTriples, changedAnimalitos) {
+  var combined = (changedTriples || []).concat(changedAnimalitos || []);
+  if (!combined.length) return false;
+
+  combined.sort(function (a, b) {
+    return _timeToMinutes(b.time) - _timeToMinutes(a.time);
+  });
+
+  var latest = combined[0];
+  if (!latest || !latest.provider) return false;
+
+  if (latest.mode === "animalitos") {
+    state.mode = "animalitos";
+    state.animalitosDay = "today";
+    state.animalitosGroupIndex = findAnimalitosGroupIndexForProvider(latest.provider);
+    return true;
+  }
+
+  state.mode = "triples";
+  state.triplesDay = "today";
+  state.pageIndex = findTripleGroupIndexForProvider(latest.provider);
+  return true;
+}
+
 // ---------- RENDER ----------
 function renderDeviceCode(code) {
   var el = document.getElementById("deviceCode");
@@ -948,21 +1131,17 @@ function renderAnimalitosGroup(day) {
   for (var gi = 0; gi < group.length; gi++) {
     var p        = group[gi];
     var byTime   = mapRowsByProvider(rows, p);
+    var slots    = getAnimalitosSlotsForProvider(p, rows);
     var rowsHtml = "";
 
-    for (var si = 0; si < SLOTS.length; si++) {
-      var t      = SLOTS[si];
+    for (var si = 0; si < slots.length; si++) {
+      var t      = slots[si];
       var rec    = byTime[t]; // objeto plano, NO .get()
       var imgUrl = (rec && rec.image) ? rec.image : "";
-      var pendingLogoUrl = (rec && rec.provider_logo_url)
+      var fallbackLogoUrl = (rec && rec.provider_logo_url)
         ? rec.provider_logo_url
         : (state.clientLogoUrl || "");
-      var fallbackImg = (!imgUrl && !state.lowMemoryMode && pendingLogoUrl)
-        ? '<img class="col__icon col__icon--pending" src="' + esc(pendingLogoUrl) + '" alt="" loading="lazy" decoding="async" />'
-        : "";
-      var img    = (!state.lowMemoryMode && imgUrl)
-        ? '<img class="col__icon" src="' + esc(imgUrl) + '" alt="" loading="lazy" decoding="async" />'
-        : fallbackImg;
+      var img    = buildAnimalIconHtml(imgUrl, fallbackLogoUrl);
       var animal = (rec && rec.animal)
         ? esc(rec.animal)
         : '<span class="col__empty">\u2026</span>';
@@ -1122,7 +1301,7 @@ function fetchTriplesByDate(dateISO) {
     || localStorage.getItem("activation_code")
     || "DEV";
   var url = getApiBase() + "/api/results/?code=" +
-            encodeURIComponent(code) + "&date=" + encodeURIComponent(dateISO);
+            encodeURIComponent(code) + "&date=" + encodeURIComponent(dateISO) + "&nocache=1";
   return fetchWithTimeout(url, { cache: "no-store" }, NETWORK_TIMEOUT_MS)
     .then(function (res) {
       if (!res.ok) return [];
@@ -1168,7 +1347,7 @@ function fetchAnimalitosByDate(dateISO) {
     || localStorage.getItem("activation_code")
     || "DEV";
   var url = getApiBase() + "/api/animalitos/?code=" +
-            encodeURIComponent(code) + "&date=" + encodeURIComponent(dateISO);
+            encodeURIComponent(code) + "&date=" + encodeURIComponent(dateISO) + "&nocache=1";
   return fetchWithTimeout(url, { cache: "no-store" }, NETWORK_TIMEOUT_MS)
     .then(function (res) {
       if (!res.ok) return [];
@@ -1217,6 +1396,9 @@ function refreshAnimalitosCaches() {
 function refreshCurrentResultCaches() {
   if (inflightRefresh.currentResults) return inflightRefresh.currentResults;
 
+  var previousTriplesToday = (state.triplesTodayRows || []).slice();
+  var previousAnimalitosToday = (state.animalitosTodayRows || []).slice();
+
   inflightRefresh.currentResults = Promise.all([
     fetchTriplesByDate(getDateISO(0)),
     fetchAnimalitosByDate(getDateISO(0))
@@ -1228,6 +1410,10 @@ function refreshCurrentResultCaches() {
     );
     saveDatasetCache("triples:today", state.triplesTodayRows);
     saveDatasetCache("animalitos:today", state.animalitosTodayRows);
+    state.lastRefreshHadVisibleChange = focusLatestChangedResult(
+      collectChangedRows(previousTriplesToday, state.triplesTodayRows, "triples"),
+      collectChangedRows(previousAnimalitosToday, state.animalitosTodayRows, "animalitos")
+    );
     return results;
   }).catch(function () {
     state.triplesTodayRows = readDatasetCache("triples:today");
@@ -1235,6 +1421,7 @@ function refreshCurrentResultCaches() {
     state.animalitosProviders = computeProviders(
       (state.animalitosTodayRows || []).concat(state.animalitosYesterdayRows || [])
     );
+    state.lastRefreshHadVisibleChange = false;
     return [state.triplesTodayRows, state.animalitosTodayRows];
   }).then(function (results) {
     inflightRefresh.currentResults = null;
@@ -1434,6 +1621,9 @@ function startRotation(durationMs) {
 window.addEventListener("resultsUpdated", function (e) {
   refreshCurrentResultCaches().then(function () {
     render();
+    if (state.lastRefreshHadVisibleChange) {
+      startRotation(getCurrentRotationMs());
+    }
   }).catch(function () {});
 });
 

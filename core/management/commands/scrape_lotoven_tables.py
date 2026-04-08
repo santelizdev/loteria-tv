@@ -475,6 +475,8 @@ class Command(BaseCommand):
                     if parsed[:2]:
                         self.stdout.write(f"[debug] sample={parsed[:2]}")
 
+        DeviceRedisService.delete_pattern("results:triples:*")
+        DeviceRedisService.delete_pattern("results:current:*")
         DeviceRedisService.delete_cache("results:current:all")
 
         self.stdout.write(

@@ -159,6 +159,49 @@ class CondorAnimalitosCommandTestCase(TestCase):
             "https://www.lottoresultados.com/img/animalitos_webp_120x120/CondorGana/14.webp",
         )
 
+    def test_parse_weekly_table_prefers_image_src_and_zero_pads_fallback(self):
+        html = """
+        <div class="card">
+          <div class="table-responsive">
+            <table class="table">
+              <thead class="thead-light">
+                <tr>
+                  <th scope="col">Sorteo</th>
+                  <th scope="col">Martes <small class="d-block small fw-bold">07/04/26</small></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row" class="fw-bold">11:00 am</th>
+                  <td align="center">
+                    <img src="/img/animalitos_webp_120x120/CondorGana/08.webp" alt="11:00 8 Ratón">
+                    8 <br><small>Ratón</small>
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row" class="fw-bold">12:00 pm</th>
+                  <td align="center">4 <br><small>Alacrán</small></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        """
+
+        rows = CondorScraperCommand()._parse_weekly_table(
+            BeautifulSoup(html, "html.parser"),
+            target_date=date(2026, 4, 7),
+        )
+
+        self.assertEqual(
+            rows[0]["image"],
+            "https://www.lottoresultados.com/img/animalitos_webp_120x120/CondorGana/08.webp",
+        )
+        self.assertEqual(
+            rows[1]["image"],
+            "https://www.lottoresultados.com/img/animalitos_webp_120x120/CondorGana/04.webp",
+        )
+
     @patch("core.management.commands.scrape_condor_animalitos.get_business_cutoff_time")
     @patch("core.management.commands.scrape_condor_animalitos.Command._fetch_html")
     def test_command_persists_rows_from_weekly_table_when_daily_block_is_incomplete(

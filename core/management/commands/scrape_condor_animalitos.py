@@ -41,7 +41,9 @@ def _is_placeholder_value(value: str) -> bool:
 
 
 def _build_condor_image_url(number: str) -> str:
-    return urljoin(BASE_URL, CONDOR_IMAGE_URL_TEMPLATE.format(number=str(number).strip()))
+    raw_number = str(number).strip()
+    normalized_number = raw_number.zfill(2) if raw_number.isdigit() else raw_number
+    return urljoin(BASE_URL, CONDOR_IMAGE_URL_TEMPLATE.format(number=normalized_number))
 
 
 def _parse_time_12h(text: str):
@@ -221,13 +223,15 @@ class Command(BaseCommand):
 
                 number = match.group(1)
                 animal = match.group(2).strip()
+                img = cells[target_index].select_one("img")
+                src = (img.get("src") if img else "") or ""
                 out.append(
                     {
                         "time": time_label,
                         "draw_time_obj": draw_time,
                         "number": number,
                         "animal": animal,
-                        "image": _build_condor_image_url(number),
+                        "image": urljoin(BASE_URL, src) if src else _build_condor_image_url(number),
                     }
                 )
 

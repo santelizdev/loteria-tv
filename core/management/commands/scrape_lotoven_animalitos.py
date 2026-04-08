@@ -288,14 +288,14 @@ class Command(BaseCommand):
             provider_name = normalize_provider_name(self._safe_text(header.select_one("p.title.one")))
 
             logo_img = header.select_one("img.logo-result")
-            provider_logo_url = self._abs_url(logo_img.get("src") if logo_img else "")
+            provider_logo_url = self._extract_media_url(logo_img)
 
             provider_link = header.select_one("a.logo-ani-header")
             provider_source_url = self._abs_url(provider_link.get("href") if provider_link else "") or source_url
 
             for card in container.select(".counter-wrapper"):
                 animal_img = card.select_one(".counter-item img")
-                animal_image_url = self._abs_url(animal_img.get("src") if animal_img else "")
+                animal_image_url = self._extract_media_url(animal_img)
 
                 info = self._safe_text(card.select_one("span.info"))
                 animal_number, animal_name = self._parse_number_and_name(info)
@@ -335,7 +335,7 @@ class Command(BaseCommand):
 
             for card in fallback_cards:
                 animal_img = card.select_one(".counter-item img")
-                animal_image_url = self._abs_url(animal_img.get("src") if animal_img else "")
+                animal_image_url = self._extract_media_url(animal_img)
 
                 info = self._safe_text(card.select_one("span.info"))
                 animal_number, animal_name = self._parse_number_and_name(info)
@@ -368,6 +368,33 @@ class Command(BaseCommand):
         if not el:
             return ""
         return el.get_text(" ", strip=True)
+
+    def _extract_media_url(self, el) -> str:
+        if not el:
+            return ""
+
+        candidates = (
+            el.get("data-src"),
+            el.get("data-lazy-src"),
+            el.get("data-original"),
+            el.get("data-srcset"),
+            el.get("srcset"),
+            el.get("src"),
+        )
+
+        for raw_value in candidates:
+            value = str(raw_value or "").strip()
+            if not value:
+                continue
+            if "," in value:
+                value = value.split(",", 1)[0].strip()
+            if " " in value:
+                value = value.split(" ", 1)[0].strip()
+            if not value or value.startswith("data:"):
+                continue
+            return self._abs_url(value)
+
+        return ""
 
     def _abs_url(self, maybe_relative: str) -> str:
         if not maybe_relative:
