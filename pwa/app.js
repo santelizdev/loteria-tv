@@ -9,6 +9,7 @@
 var DEFAULT_ROTATION_MS    = 40000;
 var ROTATION_MS            = DEFAULT_ROTATION_MS;
 var RESULTS_REFRESH_MS     = 60000;
+var STATUS_REFRESH_MS      = 60000;
 var HISTORICAL_REFRESH_MS  = 30 * 60 * 1000;
 var ANIMALITOS_INTERVAL_MS = DEFAULT_ROTATION_MS;
 var CRUZ_DAILY_REFRESH_MS  = 10 * 60 * 1000;
@@ -1199,6 +1200,10 @@ function renderDailySidebar() {
 }
 
 function render() {
+  if (!deviceManager.isActive) {
+    renderWaitingForActivation();
+    return;
+  }
   if (state.mode === "triples") renderTriplesPage();
   else renderAnimalitosGroup(state.animalitosDay);
   renderDailySidebar();
@@ -1255,7 +1260,10 @@ function applyStatusContext(ctx) {
 }
 
 function refreshStatusContext() {
-  return deviceManager.fetchContextOnce()
+  return deviceManager.syncStatusOnce()
+    .then(function () {
+      return deviceManager.fetchContextOnce();
+    })
     .then(function (ctx) {
       applyStatusContext(ctx);
       return ctx;
@@ -1627,6 +1635,22 @@ window.addEventListener("resultsUpdated", function (e) {
   }).catch(function () {});
 });
 
+window.addEventListener("deviceActivated", function () {
+  Promise.all([
+    refreshStatusContext(),
+    refreshResultCaches(),
+    refreshCruzDailyCache()
+  ]).then(function () {
+    render();
+    startRotation(getCurrentRotationMs());
+  }).catch(function () {});
+});
+
+window.addEventListener("deviceDeactivated", function () {
+  stopRotation();
+  renderWaitingForActivation();
+});
+
 // ---------- BOOT ----------
 (function boot() {
   registerServiceWorker();
@@ -1647,7 +1671,6 @@ window.addEventListener("resultsUpdated", function (e) {
       reportWebViewInfo({
         metadata: { boot_stage: "activation_code_ready" },
       });
-      deviceManager.connectSocket();
       return deviceManager.syncStatusOnce();
     })
     .then(function () {
@@ -1655,18 +1678,32 @@ window.addEventListener("resultsUpdated", function (e) {
     })
     .then(function (ctx) {
       applyStatusContext(ctx);
+      if (!deviceManager.isActive) return [];
       return Promise.all([
         refreshResultCaches(),
         refreshCruzDailyCache()
       ]);
     })
     .then(function () {
-      setInterval(refreshStatusContext, 5 * 60 * 1000);
-      setInterval(refreshCruzDailyCache, CRUZ_DAILY_REFRESH_MS);
-      setInterval(refreshCurrentResultCaches, RESULTS_REFRESH_MS);
-      setInterval(refreshHistoricalResultCaches, HISTORICAL_REFRESH_MS);
+      setInterval(refreshStatusContext, STATUS_REFRESH_MS);
+      setInterval(function () {
+        if (!deviceManager.isActive) return;
+        refreshCruzDailyCache();
+      }, CRUZ_DAILY_REFRESH_MS);
+      setInterval(function () {
+        if (!deviceManager.isActive) return;
+        refreshCurrentResultCaches();
+      }, RESULTS_REFRESH_MS);
+      setInterval(function () {
+        if (!deviceManager.isActive) return;
+        refreshHistoricalResultCaches();
+      }, HISTORICAL_REFRESH_MS);
       render();
-      startRotation(ROTATION_MS);
+      if (deviceManager.isActive) {
+        startRotation(ROTATION_MS);
+      } else {
+        stopRotation();
+      }
       reportTelemetry("LOAD_SUCCESS", {
         message: "Initial data load completed",
         metadata: {

@@ -23,6 +23,33 @@ class DeviceService:
         return cache.add(key, "1", timeout=DeviceService.LAST_SEEN_DB_EVERY_SECONDS)
 
     @staticmethod
+    def can_open_realtime_channel(*, activation_code: str) -> bool:
+        """
+        Indica si un device puede abrir el websocket operativo sin generar side-effects.
+        """
+        activation_code = (activation_code or "").strip()
+        if not activation_code:
+            return False
+
+        try:
+            device = Device.objects.select_related("branch").get(
+                activation_code=activation_code
+            )
+        except Device.DoesNotExist:
+            return False
+
+        if not device.branch:
+            return False
+
+        if not (device.branch.is_active and device.branch.is_payment_valid()):
+            return False
+
+        if not device.is_active:
+            return False
+
+        return True
+
+    @staticmethod
     def validate_device(*, activation_code: str, ip_address: str) -> Device:
         """
         Valida device + branch + suscripción + activo.

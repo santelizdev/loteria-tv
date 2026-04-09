@@ -233,6 +233,57 @@ function DeviceManager(deviceId) {
   this.wsFallbackNoticeAt = 0;
 }
 
+DeviceManager.prototype.closeSocket = function (suppressReconnect) {
+  var self = this;
+
+  if (self.wsRetryTimer) {
+    clearTimeout(self.wsRetryTimer);
+    self.wsRetryTimer = null;
+  }
+
+  self.wsRetryAttempt = 0;
+  self.wsDisabledUntil = 0;
+  self.wsFallbackNoticeAt = 0;
+
+  if (!self.ws) return;
+
+  try {
+    if (suppressReconnect) {
+      self.ws.onclose = function () {};
+      self.ws.onerror = function () {};
+    }
+
+    if (
+      self.ws.readyState === WebSocket.OPEN ||
+      self.ws.readyState === WebSocket.CONNECTING
+    ) {
+      self.ws.close();
+    }
+  } catch (e) {}
+
+  self.ws = null;
+};
+
+DeviceManager.prototype.deactivate = function (reason) {
+  var wasActive = !!(this.isActive || this.branchId);
+
+  this.isActive = false;
+  this.branchId = null;
+
+  if (this.resultsInterval) clearInterval(this.resultsInterval);
+  if (this.heartbeatInterval) clearTimeout(this.heartbeatInterval);
+  this.resultsInterval = null;
+  this.heartbeatInterval = null;
+
+  this.closeSocket(true);
+
+  if (wasActive) {
+    window.dispatchEvent(new CustomEvent("deviceDeactivated", {
+      detail: { reason: String(reason || "").trim() }
+    }));
+  }
+};
+
 DeviceManager.prototype.fetchContextOnce = function () {
   var self = this;
   if (!self.activationCode) return Promise.resolve(null);
@@ -303,6 +354,7 @@ DeviceManager.prototype.registerDevice = function () {
 DeviceManager.prototype.connectSocket = function () {
   var self = this;
   if (!self.activationCode) return;
+  if (!self.isActive || !self.branchId) return;
   if (Date.now() < self.wsDisabledUntil) return;
 
   if (
@@ -348,6 +400,7 @@ DeviceManager.prototype.connectSocket = function () {
 
 DeviceManager.prototype.scheduleReconnect = function () {
   var self    = this;
+  if (!self.isActive || !self.branchId) return;
   var attempt = (self.wsRetryAttempt || 0) + 1;
   self.wsRetryAttempt = attempt;
 
@@ -396,6 +449,7 @@ DeviceManager.prototype.activate = function (branchId) {
 
   this.startHeartbeat();
   this.startResultsPolling();
+  this.connectSocket();
 
   window.dispatchEvent(new CustomEvent("deviceActivated", { detail: { branchId: branchId } }));
 
@@ -406,6 +460,7 @@ DeviceManager.prototype.startHeartbeat = function () {
   var self = this;
   if (self.heartbeatInterval) return;
   if (!self.activationCode) return;
+  if (!self.isActive || !self.branchId) return;
 
   self.scheduleHeartbeat(getNextHeartbeatDelayMs());
   self.sendHeartbeatOnce();
@@ -439,6 +494,12 @@ DeviceManager.prototype.sendHeartbeatOnce = function () {
       device_id: self.deviceId,
       code: self.activationCode,
     }),
+  }).then(function (res) {
+    if (res && (res.status === 403 || res.status === 404)) {
+      self.deactivate("heartbeat_" + String(res.status));
+      return null;
+    }
+    return res;
   }).catch(function () {
     return null;
   });
@@ -448,6 +509,7 @@ DeviceManager.prototype.startResultsPolling = function () {
   var self = this;
   if (self.resultsInterval) return;
   if (!self.activationCode) return;
+  if (!self.isActive || !self.branchId) return;
 
   var apiBase = getApiBase();
 
@@ -456,6 +518,10 @@ DeviceManager.prototype.startResultsPolling = function () {
       apiBase + ENDPOINTS.results + "?code=" + encodeURIComponent(self.activationCode) + "&nocache=1",
           { cache: "no-store" }
     ).then(function (res) {
+        if (res && (res.status === 403 || res.status === 404)) {
+          self.deactivate("results_" + String(res.status));
+          return;
+        }
         if (!res.ok) return;
       return res.json().then(function (data) {
         window.dispatchEvent(new CustomEvent("resultsUpdated", { detail: data }));
@@ -469,6 +535,7 @@ DeviceManager.prototype.startResultsPolling = function () {
 DeviceManager.prototype.fetchResultsOnce = function () {
   var self = this;
   if (!self.activationCode) return Promise.resolve();
+  if (!self.isActive || !self.branchId) return Promise.resolve();
 
   var apiBase = getApiBase();
 
@@ -476,6 +543,10 @@ DeviceManager.prototype.fetchResultsOnce = function () {
     apiBase + ENDPOINTS.results + "?code=" + encodeURIComponent(self.activationCode) + "&nocache=1",
         { cache: "no-store" }
   ).then(function (res) {
+      if (res && (res.status === 403 || res.status === 404)) {
+        self.deactivate("results_once_" + String(res.status));
+        return;
+      }
       if (!res.ok) return;
     return res.json().then(function (data) {
       window.dispatchEvent(new CustomEvent("resultsUpdated", { detail: data }));
@@ -492,11 +563,19 @@ DeviceManager.prototype.syncStatusOnce = function () {
     apiBase + ENDPOINTS.status + "?code=" + encodeURIComponent(self.activationCode),
       { cache: "no-store" }
   ).then(function (res) {
-    if (!res.ok) return;
-    return res.json().then(function (data) {
-      if (data.is_active && data.branch_id && !self.isActive) {
-        self.activate(data.branch_id);
+    if (!res.ok) {
+      if (res.status === 403 || res.status === 404) {
+        self.deactivate("status_" + String(res.status));
+      }
+      return null;
     }
+    return res.json().then(function (data) {
+      if (data && data.is_active && data.branch_id) {
+        self.activate(data.branch_id);
+      } else {
+        self.deactivate("status_inactive");
+      }
+      return data;
     });
   });
 };
@@ -511,11 +590,7 @@ DeviceManager.prototype.handleOffline = function () {
 
 DeviceManager.prototype.handleOnline = function () {
   console.log("Conexión restaurada");
-  if (this.isActive) {
-    this.startHeartbeat();
-    this.startResultsPolling();
-  }
-  this.connectSocket();
+  this.syncStatusOnce();
 };
 
 // Exponer globalmente para que app.js lo use sin import

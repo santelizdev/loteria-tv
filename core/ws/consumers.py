@@ -1,20 +1,20 @@
 # core/ws/consumers.py
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from asgiref.sync import sync_to_async
-from django.apps import apps
+
+from core.services.device_service import DeviceService
 
 class DeviceConsumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
         self.activation_code = self.scope["url_route"]["kwargs"]["activation_code"]
         self.group_name = f"device_{self.activation_code}"
 
-        Device = apps.get_model("core", "Device")
-        exists = await sync_to_async(
-            Device.objects.filter(activation_code=self.activation_code).exists
-        )()
+        can_open = await sync_to_async(
+            DeviceService.can_open_realtime_channel
+        )(activation_code=self.activation_code)
 
-        if not exists:
-            await self.close(code=4404)
+        if not can_open:
+            await self.close(code=4403)
             return
 
         await self.channel_layer.group_add(self.group_name, self.channel_name)

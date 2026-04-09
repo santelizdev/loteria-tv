@@ -34,6 +34,7 @@ from core.models import (
     Transmission,
 )
 from core.services.device_telemetry_service import DeviceTelemetryService
+from core.services.device_service import DeviceService
 from core.services.provider_catalog_service import (
     canonical_animalito_provider_name,
     is_visible_animalito_provider,
@@ -78,6 +79,65 @@ class AnimalitoProviderCatalogTestCase(TestCase):
         self.assertTrue(is_visible_animalito_provider("Guacharo Activo"))
         self.assertTrue(is_visible_animalito_provider("Lotto Activo RD Int"))
         self.assertTrue(is_visible_animalito_provider("Condor Gana"))
+
+
+class DeviceRealtimeChannelEligibilityTestCase(TestCase):
+    def setUp(self):
+        self.client_obj = Client.objects.create(name="Cliente WS")
+        self.branch = Branch.objects.create(
+            client=self.client_obj,
+            name="Sucursal WS",
+            is_active=True,
+            paid_until=timezone.now() + timedelta(days=7),
+        )
+
+    def test_allows_active_device_with_operational_branch(self):
+        device = Device.objects.create(
+            device_id="ws-device-1",
+            activation_code="WS1001",
+            branch=self.branch,
+            is_active=True,
+        )
+
+        self.assertTrue(
+            DeviceService.can_open_realtime_channel(
+                activation_code=device.activation_code
+            )
+        )
+
+    def test_blocks_inactive_device(self):
+        device = Device.objects.create(
+            device_id="ws-device-2",
+            activation_code="WS1002",
+            branch=self.branch,
+            is_active=False,
+        )
+
+        self.assertFalse(
+            DeviceService.can_open_realtime_channel(
+                activation_code=device.activation_code
+            )
+        )
+
+    def test_blocks_device_without_operational_branch(self):
+        expired_branch = Branch.objects.create(
+            client=self.client_obj,
+            name="Sucursal vencida",
+            is_active=True,
+            paid_until=timezone.now() - timedelta(days=1),
+        )
+        device = Device.objects.create(
+            device_id="ws-device-3",
+            activation_code="WS1003",
+            branch=expired_branch,
+            is_active=True,
+        )
+
+        self.assertFalse(
+            DeviceService.can_open_realtime_channel(
+                activation_code=device.activation_code
+            )
+        )
 
 
 class TuAzarAnimalitoFallbackServiceTestCase(TestCase):
