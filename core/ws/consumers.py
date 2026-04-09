@@ -2,10 +2,10 @@
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from asgiref.sync import sync_to_async
 
-from core.services.device_service import DeviceService
-
 class DeviceConsumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
+        from core.services.device_service import DeviceService
+
         self.activation_code = self.scope["url_route"]["kwargs"]["activation_code"]
         self.group_name = f"device_{self.activation_code}"
 
