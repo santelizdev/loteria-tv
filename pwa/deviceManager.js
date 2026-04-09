@@ -222,6 +222,7 @@ function DeviceManager(deviceId) {
 
   this.isActive  = false;
   this.branchId  = null;
+  this.wsEnabled = false;
 
   this.resultsInterval   = null;
   this.heartbeatInterval = null;
@@ -269,6 +270,7 @@ DeviceManager.prototype.deactivate = function (reason) {
 
   this.isActive = false;
   this.branchId = null;
+  this.wsEnabled = false;
 
   if (this.resultsInterval) clearInterval(this.resultsInterval);
   if (this.heartbeatInterval) clearTimeout(this.heartbeatInterval);
@@ -355,6 +357,7 @@ DeviceManager.prototype.connectSocket = function () {
   var self = this;
   if (!self.activationCode) return;
   if (!self.isActive || !self.branchId) return;
+  if (!self.wsEnabled) return;
   if (Date.now() < self.wsDisabledUntil) return;
 
   if (
@@ -390,7 +393,17 @@ DeviceManager.prototype.connectSocket = function () {
     }
   };
 
-  self.ws.onclose = function () {
+  self.ws.onclose = function (event) {
+    self.ws = null;
+
+    if (event && event.code === 4403) {
+      self.wsRetryAttempt = 0;
+      self.wsDisabledUntil = Date.now() + 60000;
+      console.warn("WebSocket rechazado por backend; revalidando estado del device.");
+      self.syncStatusOnce().catch(function () {});
+      return;
+    }
+
     console.warn("WebSocket desconectado, reintentando...");
     self.scheduleReconnect();
   };
@@ -401,6 +414,7 @@ DeviceManager.prototype.connectSocket = function () {
 DeviceManager.prototype.scheduleReconnect = function () {
   var self    = this;
   if (!self.isActive || !self.branchId) return;
+  if (!self.wsEnabled) return;
   var attempt = (self.wsRetryAttempt || 0) + 1;
   self.wsRetryAttempt = attempt;
 
@@ -440,8 +454,11 @@ DeviceManager.prototype.handleSocketMessage = function (data) {
   }
 };
 
-DeviceManager.prototype.activate = function (branchId) {
+DeviceManager.prototype.activate = function (branchId, options) {
   if (!branchId) return;
+  if (options && typeof options.wsEnabled === "boolean") {
+    this.wsEnabled = options.wsEnabled;
+  }
   if (this.isActive && this.branchId === branchId) return;
 
   this.isActive  = true;
@@ -570,8 +587,9 @@ DeviceManager.prototype.syncStatusOnce = function () {
       return null;
     }
     return res.json().then(function (data) {
+      self.wsEnabled = !!(data && data.realtime_enabled);
       if (data && data.is_active && data.branch_id) {
-        self.activate(data.branch_id);
+        self.activate(data.branch_id, { wsEnabled: self.wsEnabled });
       } else {
         self.deactivate("status_inactive");
       }

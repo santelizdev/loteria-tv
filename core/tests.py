@@ -427,6 +427,8 @@ class DeviceTelemetryAPITestCase(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["rotation_seconds"], 40)
+        self.assertTrue(response.json()["is_active"])
+        self.assertTrue(response.json()["realtime_enabled"])
 
     def test_status_endpoint_returns_configured_rotation_seconds(self):
         settings_obj = DisplaySettings.get_solo()
@@ -441,6 +443,35 @@ class DeviceTelemetryAPITestCase(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["rotation_seconds"], 30)
+
+    def test_status_endpoint_marks_inactive_when_branch_subscription_expired(self):
+        self.branch.paid_until = timezone.now() - timedelta(days=1)
+        self.branch.save(update_fields=["paid_until"])
+
+        response = self.client.get(
+            "/api/devices/status/",
+            {"code": self.device.activation_code},
+            REMOTE_ADDR="10.10.10.20",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["is_active"])
+        self.assertFalse(response.json()["realtime_enabled"])
+        self.assertEqual(response.json()["branch_id"], self.branch.id)
+
+    def test_status_endpoint_marks_inactive_when_branch_is_disabled(self):
+        self.branch.is_active = False
+        self.branch.save(update_fields=["is_active"])
+
+        response = self.client.get(
+            "/api/devices/status/",
+            {"code": self.device.activation_code},
+            REMOTE_ADDR="10.10.10.20",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["is_active"])
+        self.assertFalse(response.json()["realtime_enabled"])
 
 
 @override_settings(CACHES=TEST_CACHES, CHANNEL_LAYERS=TEST_CHANNEL_LAYERS)

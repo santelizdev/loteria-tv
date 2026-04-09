@@ -617,14 +617,20 @@ class DeviceStatusAPIView(APIView):
                     client_logo_url = ""
 
         display_settings = DisplaySettings.get_solo()
+        branch_is_operational = bool(
+            device.is_active
+            and device.branch
+            and device.branch.can_operate()
+        )
 
         return _apply_no_cache_headers(
             Response(
                 {
-                    "is_active": bool(device.is_active and device.branch_id),
+                    "is_active": branch_is_operational,
                     "branch_id": device.branch_id,
                     "client_logo_url": client_logo_url,
                     "rotation_seconds": int(display_settings.rotation_seconds or 40),
+                    "realtime_enabled": branch_is_operational,
                 },
                 status=status.HTTP_200_OK,
             )
