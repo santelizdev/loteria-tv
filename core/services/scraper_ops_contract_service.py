@@ -28,7 +28,6 @@ class ScraperOpsContractService:
                 "Triple Chance estricto por grupo A/B/C en 13:00, 16:00 y 19:00.",
                 "Triple Caracas A/B/C en 13:00 y 16:30.",
                 "Triple Caliente A/B/C en 13:00, 16:30 y 19:10.",
-                "Triple Tachira A/B/C en 13:15 y 16:45.",
                 "Triple Zamorano A/C en 10:00, 12:00 y 14:00.",
             ),
             real_failure_definition=(

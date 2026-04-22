@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from django.core.management.base import BaseCommand
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
 from django.db import OperationalError
 from django.db.models import Count
 from django.utils import timezone
@@ -10,6 +13,24 @@ from django.utils import timezone
 from core.management.command_helpers import raise_database_connection_help
 from core.models import AnimalitoArchive, AnimalitoResult, CurrentResult, ResultArchive
 from core.services.scraper_health_service import ScraperHealthService
+=======
+from django.db.models import Count
+from django.utils import timezone
+
+from core.models import AnimalitoArchive, AnimalitoResult, CurrentResult, ResultArchive
+>>>>>>> theirs
+=======
+from django.db.models import Count
+from django.utils import timezone
+
+from core.models import AnimalitoArchive, AnimalitoResult, CurrentResult, ResultArchive
+>>>>>>> theirs
+=======
+from django.db.models import Count
+from django.utils import timezone
+
+from core.models import AnimalitoArchive, AnimalitoResult, CurrentResult, ResultArchive
+>>>>>>> theirs
 
 
 @dataclass
@@ -40,11 +61,20 @@ class Command(BaseCommand):
             help="Maximum allowed distinct draw_date values per table (default: 1).",
         )
         parser.add_argument(
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
             "--skip-scrapers",
             action="store_true",
             help="Skip scraper health checks and only validate result tables.",
         )
         parser.add_argument(
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
             "--strict",
             action="store_true",
             help="Exit with non-zero status if any check fails.",
@@ -52,17 +82,38 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         max_distinct_dates = int(options["max_distinct_dates"])
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
         skip_scrapers = bool(options["skip_scrapers"])
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
         strict = bool(options["strict"])
 
         today = timezone.localdate()
         yesterday = today - timezone.timedelta(days=1)
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
         current_dt = timezone.now()
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 
         failures: list[str] = []
 
         self.stdout.write(f"today={today} yesterday={yesterday}")
 
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
         try:
             for table in TABLES:
                 distinct_dates = table.model.objects.values("draw_date").distinct().count()
@@ -88,6 +139,40 @@ class Command(BaseCommand):
             yesterday_archive_animalitos = AnimalitoArchive.objects.filter(draw_date=yesterday).count()
         except OperationalError as exc:
             raise_database_connection_help(command_name="check_ops_health", exc=exc)
+=======
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+        for table in TABLES:
+            distinct_dates = table.model.objects.values("draw_date").distinct().count()
+            total_rows = table.model.objects.count()
+            top_dates = list(
+                table.model.objects.values("draw_date")
+                .annotate(c=Count("id"))
+                .order_by("-draw_date")[:5]
+            )
+
+            self.stdout.write(
+                f"{table.name}: rows={total_rows} distinct_draw_dates={distinct_dates} recent={top_dates}"
+            )
+
+            if distinct_dates > max_distinct_dates:
+                failures.append(
+                    f"{table.name} has {distinct_dates} distinct draw_date values (> {max_distinct_dates})"
+                )
+
+        today_triples = CurrentResult.objects.filter(draw_date=today).count()
+        today_animalitos = AnimalitoResult.objects.filter(draw_date=today).count()
+        yesterday_archive_triples = ResultArchive.objects.filter(draw_date=yesterday).count()
+        yesterday_archive_animalitos = AnimalitoArchive.objects.filter(draw_date=yesterday).count()
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 
         self.stdout.write(
             f"CurrentResult(today)={today_triples} | AnimalitoResult(today)={today_animalitos}"
@@ -106,6 +191,9 @@ class Command(BaseCommand):
         if yesterday_archive_animalitos == 0:
             failures.append("AnimalitoArchive has 0 rows for yesterday")
 
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
         if not skip_scrapers:
             self.stdout.write("")
             self.stdout.write("Scraper health:")
@@ -133,6 +221,12 @@ class Command(BaseCommand):
                         f"Scraper {definition.key} has active alert [{alert['alert_kind']}]: {alert['message']}"
                     )
 
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
         if failures:
             for failure in failures:
                 self.stderr.write(self.style.ERROR(f"FAIL: {failure}"))

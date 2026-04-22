@@ -42,6 +42,7 @@ from core.services.provider_catalog_service import (
     is_visible_animalito_provider,
 )
 from core.services.device_redis_service import DeviceRedisService
+from core.services.results_refresh_service import ResultsRefreshService
 
 
 
@@ -169,8 +170,6 @@ class Command(BaseCommand):
             )
             return
         
-        DeviceRedisService.delete_pattern("results:animalitos:*")
-
         html = self._fetch_html(target_date=target_date, force=force)
         rows = self._parse_html(html, target_date=target_date, verbosity=verbosity)
         rows = [row for row in rows if is_visible_animalito_provider(row.get("provider_name") or "")]
@@ -188,8 +187,10 @@ class Command(BaseCommand):
         prov_created, prov_updated = upsert_providers(provider_rows)
         self.stdout.write(self.style.SUCCESS(f"Providers upsert: created={prov_created} updated={prov_updated}"))
 
-        created, updated = self._upsert_results(rows, target_date)
+        created, updated, has_changes = self._upsert_results(rows, target_date)
         self._set_last_run(target_date)
+        DeviceRedisService.delete_pattern("results:animalitos:*")
+        ResultsRefreshService.schedule_refresh_results_now_on_commit(has_changes=has_changes)
 
         self.stdout.write(
             self.style.SUCCESS(
@@ -441,15 +442,17 @@ class Command(BaseCommand):
     # -------------------------------------------------------------------------
     # UPSERT RESULTS
     # -------------------------------------------------------------------------
-    def _upsert_results(self, rows: list[dict], target_date: date_cls) -> tuple[int, int]:
+    def _upsert_results(self, rows: list[dict], target_date: date_cls) -> tuple[int, int, bool]:
         created = 0
         updated = 0
+        has_changes = False
 
-        AnimalitoResult.objects.filter(
+        deleted_count, _ = AnimalitoResult.objects.filter(
             provider__name__in=VISIBLE_ANIMALITO_PROVIDERS,
             draw_date=target_date,
             draw_time__hour__gt=self.LAST_VISIBLE_HOUR,
         ).delete()
+        has_changes = bool(deleted_count)
 
         for r in rows:
             provider_name = normalize_provider_name(r["provider_name"])
@@ -463,7 +466,7 @@ class Command(BaseCommand):
                     is_active=True,
                 )
 
-            _, was_created = AnimalitoResult.objects.update_or_create(
+            _, was_created, was_changed = ResultsRefreshService.upsert_animalito_result(
                 provider=provider,
                 draw_date=target_date,
                 draw_time=r["draw_time_obj"],
@@ -479,7 +482,8 @@ class Command(BaseCommand):
 
             if was_created:
                 created += 1
-            else:
+            elif was_changed:
                 updated += 1
+            has_changes = has_changes or was_changed
 
-        return created, updated
+        return created, updated, has_changes

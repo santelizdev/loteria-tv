@@ -232,6 +232,7 @@ function DeviceManager(deviceId) {
   this.wsRetryTimer   = null;
   this.wsDisabledUntil = 0;
   this.wsFallbackNoticeAt = 0;
+  this.lastRealtimeResultsRefreshAt = 0;
 }
 
 DeviceManager.prototype.closeSocket = function (suppressReconnect) {
@@ -439,6 +440,11 @@ DeviceManager.prototype.scheduleReconnect = function () {
 
 DeviceManager.prototype.handleSocketMessage = function (data) {
   // FIX: data?.type → data && data.type
+  if (data && data.type === "refresh_results_now") {
+    this.dispatchRealtimeResultsRefresh(data);
+    return;
+  }
+
   if (data && data.type === "device_assigned") {
     if (!data.branch_id) return;
     if (this.isActive && this.branchId === data.branch_id) return;
@@ -452,6 +458,18 @@ DeviceManager.prototype.handleSocketMessage = function (data) {
       window.dispatchEvent(new CustomEvent("branchChanged", { detail: data }));
     }
   }
+};
+
+DeviceManager.prototype.dispatchRealtimeResultsRefresh = function (data) {
+  var now = Date.now();
+  if ((now - (this.lastRealtimeResultsRefreshAt || 0)) < 1500) {
+    return;
+  }
+
+  this.lastRealtimeResultsRefreshAt = now;
+  window.dispatchEvent(new CustomEvent("resultsUpdated", {
+    detail: data || { type: "refresh_results_now", source: "websocket" }
+  }));
 };
 
 DeviceManager.prototype.activate = function (branchId, options) {

@@ -216,9 +216,13 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.scrape_animalitos",
         "schedule": crontab(minute="*/3", hour="8-22"),
     },
-    "scrape_condor_animalitos_every_3_minutes": {
+    "scrape_condor_animalitos_every_minute": {
         "task": "core.tasks.scrape_condor_animalitos",
-        "schedule": crontab(minute="*/3", hour="9-22"),
+        "schedule": crontab(minute="*", hour="9-22"),
+    },
+    "scrape_triple_tachira_every_minute": {
+        "task": "core.tasks.scrape_triple_tachira",
+        "schedule": crontab(minute="*", hour="13-22"),
     },
     "archive_daily": {
         "task": "core.tasks.archive_daily",

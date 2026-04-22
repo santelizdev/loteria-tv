@@ -16,13 +16,18 @@ from django.utils import timezone
 from core.models import Provider
 from core.models.animalito_result import AnimalitoResult
 from core.services.device_redis_service import DeviceRedisService
+from core.services.results_refresh_service import ResultsRefreshService
 from core.services.result_window_service import (
     delete_future_rows_for_provider,
     get_business_cutoff_time,
 )
 
 
-SOURCE_URL = "https://www.lottoresultados.com/resultados/animalitos/condor-gana"
+SOURCE_URL = "https://resultados365.com/resultados/Condor%20Gana"
+SOURCE_RESULTS_API_TEMPLATE = (
+    "https://resultados365.com/api/v2/sorteos/resultados"
+    "?id_sorteo=1103&fecha={date}&tabla=true"
+)
 BASE_URL = "https://www.lottoresultados.com"
 CONDOR_IMAGE_URL_TEMPLATE = "/img/animalitos_webp_120x120/CondorGana/{number}.webp"
 
@@ -70,8 +75,7 @@ def _get_or_create_provider() -> Provider:
         name="Condor Gana",
         defaults={"source_url": SOURCE_URL, "is_active": True},
     )
-    # Asegura source_url requerido
-    if not provider.source_url:
+    if provider.source_url != SOURCE_URL:
         provider.source_url = SOURCE_URL
         provider.save(update_fields=["source_url"])
     if provider.is_active is False:
@@ -81,7 +85,7 @@ def _get_or_create_provider() -> Provider:
 
 
 class Command(BaseCommand):
-    help = "Scrapea Condor Gana (animalitos) desde lottoresultados.com y guarda en AnimalitoResult."
+    help = "Scrapea Condor Gana (animalitos) desde Resultados365 y guarda en AnimalitoResult."
 
     def add_arguments(self, parser):
         parser.add_argument("--timeout", type=int, default=20)
@@ -108,14 +112,7 @@ class Command(BaseCommand):
             )
 
         html = self._fetch_html(timeout=timeout)
-        soup = BeautifulSoup(html, "html.parser")
-
-        rows = self._parse_weekly_table(soup, target_date=target_date)
-        if not rows:
-            rows = self._parse_daily_block(soup, target_date=target_date, today=today)
-
-        # invalidación cache ANIMALITOS (para TVs)
-        DeviceRedisService.delete_pattern("results:animalitos:*")
+        rows = self._fetch_rows_from_resultados365(html=html, target_date=target_date, timeout=timeout)
 
         if dry_run:
             self.stdout.write(self.style.SUCCESS(f"DRY RUN: parsed={len(rows)}"))
@@ -137,14 +134,14 @@ class Command(BaseCommand):
 
         created = 0
         updated = 0
-
+        has_changes = False
         for r in rows:
-            obj, was_created = AnimalitoResult.objects.update_or_create(
+            _, was_created, was_changed = ResultsRefreshService.upsert_animalito_result(
                 provider=provider,
                 draw_date=target_date,
                 draw_time=r["draw_time_obj"],
                 defaults={
-                    "animal_number": r["number"],        # Django coerces si es IntegerField
+                    "animal_number": r["number"],
                     "animal_name": r["animal"],
                     "animal_image_url": r["image"],
                     "provider_logo_url": provider.logo_url or "",
@@ -154,11 +151,17 @@ class Command(BaseCommand):
             )
             if was_created:
                 created += 1
-            else:
+            elif was_changed:
                 updated += 1
+            has_changes = has_changes or was_changed
+
+        DeviceRedisService.delete_pattern("results:animalitos:*")
+        ResultsRefreshService.schedule_refresh_results_now_on_commit(
+            has_changes=has_changes or bool(future_purged)
+        )
 
         self.stdout.write(self.style.SUCCESS(
-            f"OK Condor Gana (lottoresultados): date={target_date} parsed={len(rows)} created={created} updated={updated} future_purged={future_purged}"
+            f"OK Condor Gana (resultados365): date={target_date} parsed={len(rows)} created={created} updated={updated} future_purged={future_purged}"
         ))
 
     def _fetch_html(self, timeout: int) -> str:
@@ -174,6 +177,77 @@ class Command(BaseCommand):
         )
         resp.raise_for_status()
         return resp.text
+
+    def _fetch_rows_from_resultados365(self, *, html: str, target_date, timeout: int) -> list[dict]:
+        data_url = self._resolve_results_api_url(html=html, target_date=target_date)
+        response = requests.get(
+            data_url,
+            timeout=timeout,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+                )
+            },
+        )
+        response.raise_for_status()
+        return self._parse_results365_table(response.text)
+
+    def _resolve_results_api_url(self, *, html: str, target_date) -> str:
+        soup = BeautifulSoup(html, "html.parser")
+        button = soup.select_one(".btn-copiar[data-url]")
+        if not button:
+            return SOURCE_RESULTS_API_TEMPLATE.format(date=target_date.isoformat())
+
+        data_url = _normalize_space(button.get("data-url") or "")
+        if not data_url:
+            return SOURCE_RESULTS_API_TEMPLATE.format(date=target_date.isoformat())
+
+        data_url = re.sub(r"fecha=\d{4}-\d{2}-\d{2}", f"fecha={target_date.isoformat()}", data_url)
+        return urljoin(SOURCE_URL, data_url)
+
+    def _parse_results365_table(self, html: str) -> list[dict]:
+        soup = BeautifulSoup(html, "html.parser")
+        rows = []
+        for tr in soup.select("table tbody tr"):
+            cells = tr.find_all("td")
+            if len(cells) < 3:
+                continue
+
+            draw_label = _normalize_space(cells[0].get_text(" ", strip=True))
+            number = _normalize_space(cells[1].get_text(" ", strip=True))
+            animal = _normalize_space(cells[2].get_text(" ", strip=True))
+
+            if _is_placeholder_value(number) or _is_placeholder_value(animal):
+                continue
+
+            draw_time = self._parse_results365_time(draw_label)
+            if not draw_time:
+                continue
+
+            rows.append(
+                {
+                    "time": draw_label,
+                    "draw_time_obj": draw_time,
+                    "number": number.zfill(2) if number.isdigit() else number,
+                    "animal": animal,
+                    "image": _build_condor_image_url(number),
+                }
+            )
+        return rows
+
+    def _parse_results365_time(self, value: str):
+        match = re.search(r"(\d{1,2})(?::(\d{2}))?\s*([AP]M)$", _normalize_space(value), re.IGNORECASE)
+        if not match:
+            return None
+        hour = int(match.group(1))
+        minute = int(match.group(2) or "00")
+        meridiem = match.group(3).lower()
+        if hour == 12:
+            hour = 0
+        if meridiem == "pm":
+            hour += 12
+        return datetime.strptime(f"{hour:02d}:{minute:02d}", "%H:%M").time()
 
     def _parse_weekly_table(self, soup, *, target_date) -> list[dict]:
         target_label = target_date.strftime("%d/%m/%y")

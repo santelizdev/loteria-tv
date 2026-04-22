@@ -24,6 +24,11 @@ def scrape_condor_animalitos():
 
 
 @shared_task
+def scrape_triple_tachira():
+    return call_command("scrape_triple_tachira")
+
+
+@shared_task
 def archive_daily():
     call_command("run_daily_retention")
 

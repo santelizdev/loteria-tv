@@ -37,6 +37,7 @@ from django.utils import timezone
 from django.core.cache import cache
 
 from core.models import Provider, CurrentResult
+from core.services.results_refresh_service import ResultsRefreshService
 from core.services.result_window_service import (
     delete_future_rows_for_provider,
     get_business_cutoff_time,
@@ -286,13 +287,13 @@ def _save_row(*, provider: Provider, draw_date, row: ParsedRow) -> bool:
     if row.signo:
         defaults["extra"] = {"signo": row.signo}
 
-    CurrentResult.objects.update_or_create(
+    _, _, was_changed = ResultsRefreshService.upsert_current_result(
         provider=provider,
         draw_date=draw_date,
         draw_time=row.draw_time,
         defaults=defaults,
     )
-    return True
+    return was_changed
 
 
 def _invalidate_results_cache() -> None:
@@ -368,6 +369,7 @@ class Command(BaseCommand):
         saved = 0
         saved_with_signo = 0
         future_purged = 0
+        has_changes = False
         missing_blocks: List[str] = []
 
         with transaction.atomic():
@@ -379,16 +381,19 @@ class Command(BaseCommand):
                 provider = _get_or_create_provider("Chance Astral")
                 rows = _filter_due_rows(_parse_block_triple_and_signo(b), cutoff_time)
                 for r in rows:
-                    if _save_row(provider=provider, draw_date=today, row=r):
-                        saved += 1
-                        if r.signo:
-                            saved_with_signo += 1
-                future_purged += delete_future_rows_for_provider(
+                    row_changed = _save_row(provider=provider, draw_date=today, row=r)
+                    saved += 1
+                    has_changes = has_changes or row_changed
+                    if r.signo:
+                        saved_with_signo += 1
+                purged = delete_future_rows_for_provider(
                     model=CurrentResult,
                     provider=provider,
                     draw_date=today,
                     cutoff_time=cutoff_time,
                 )
+                future_purged += purged
+                has_changes = has_changes or bool(purged)
 
             # 2) Triple Gana (con signo)
             b = _find_block_by_title(soup, targets["Triple Gana"]["title"])
@@ -398,16 +403,19 @@ class Command(BaseCommand):
                 provider = _get_or_create_provider("Triple Gana")
                 rows = _filter_due_rows(_parse_block_triple_and_signo(b), cutoff_time)
                 for r in rows:
-                    if _save_row(provider=provider, draw_date=today, row=r):
-                        saved += 1
-                        if r.signo:
-                            saved_with_signo += 1
-                future_purged += delete_future_rows_for_provider(
+                    row_changed = _save_row(provider=provider, draw_date=today, row=r)
+                    saved += 1
+                    has_changes = has_changes or row_changed
+                    if r.signo:
+                        saved_with_signo += 1
+                purged = delete_future_rows_for_provider(
                     model=CurrentResult,
                     provider=provider,
                     draw_date=today,
                     cutoff_time=cutoff_time,
                 )
+                future_purged += purged
+                has_changes = has_changes or bool(purged)
 
             # 3) Super Gana (con signo)
             b = _find_block_by_title(soup, targets["Super Gana"]["title"])
@@ -417,19 +425,23 @@ class Command(BaseCommand):
                 provider = _get_or_create_provider("Super Gana")
                 rows = _filter_due_rows(_parse_block_triple_and_signo(b), cutoff_time)
                 for r in rows:
-                    if _save_row(provider=provider, draw_date=today, row=r):
-                        saved += 1
-                        if r.signo:
-                            saved_with_signo += 1
-                future_purged += delete_future_rows_for_provider(
+                    row_changed = _save_row(provider=provider, draw_date=today, row=r)
+                    saved += 1
+                    has_changes = has_changes or row_changed
+                    if r.signo:
+                        saved_with_signo += 1
+                purged = delete_future_rows_for_provider(
                     model=CurrentResult,
                     provider=provider,
                     draw_date=today,
                     cutoff_time=cutoff_time,
                 )
+                future_purged += purged
+                has_changes = has_changes or bool(purged)
 
         # Cache invalidation al final (crítico por tu keyspace results:triples:v4:...:{YYYY-MM-DD})
         _invalidate_results_cache()
+        ResultsRefreshService.schedule_refresh_results_now_on_commit(has_changes=has_changes)
 
         # Resumen
         self.stdout.write(self.style.SUCCESS("TuAzar scrape finalizado."))

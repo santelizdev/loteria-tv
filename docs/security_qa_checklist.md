@@ -2,11 +2,20 @@
 
 Este documento traduce el checklist pendiente a verificaciones ejecutables dentro del proyecto.
 
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
 Resolución de variables de entorno:
 - El host local puede usar `.env.local`.
 - Docker Compose usa `.env.docker`.
 - Variables exportadas por el sistema o el proceso tienen prioridad sobre ambos.
 
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 ## Comandos nuevos
 
 ### 1) Salud operacional + integridad de fechas
@@ -15,6 +24,9 @@ Resolución de variables de entorno:
 python manage.py check_ops_health --strict
 ```
 
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
 Si ejecutas `manage.py` desde tu shell local en macOS/Linux, usa `.env.local` con `127.0.0.1` para no depender de los hostnames internos de Docker (`postgres`, `redis`).
 
 ```bash
@@ -22,6 +34,12 @@ docker compose up -d postgres redis
 python manage.py check_ops_health --strict
 ```
 
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 Valida:
 - Máximo de fechas distintas por tabla (`CurrentResult`, `AnimalitoResult`, `ResultArchive`, `AnimalitoArchive`).
 - Que existan resultados del día en tablas current.
@@ -30,6 +48,9 @@ Valida:
 ### 2) Retention con safety checks
 
 ```bash
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
 python manage.py run_daily_retention
 python manage.py enforce_retention --dry-run
 python manage.py enforce_retention
@@ -41,16 +62,37 @@ Desde el host local, con `.env.local` configurado:
 
 ```bash
 python manage.py enforce_retention --dry-run
+=======
+python manage.py enforce_retention --dry-run
+python manage.py enforce_retention
+>>>>>>> theirs
+=======
+python manage.py enforce_retention --dry-run
+python manage.py enforce_retention
+>>>>>>> theirs
+=======
+python manage.py enforce_retention --dry-run
+python manage.py enforce_retention
+>>>>>>> theirs
 ```
 
 `enforce_retention` ahora aborta si detecta que **no hay datos de ayer** en `ResultArchive` o `AnimalitoArchive`.
 
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
 El timer de producción debe ejecutar el wrapper versionado:
 
 ```bash
 /home/deploy/loteriatv/scripts/daily_retention.sh
 ```
 
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 Si necesitas forzarlo (mantenimiento manual):
 
 ```bash

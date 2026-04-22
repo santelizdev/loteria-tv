@@ -26,6 +26,7 @@ from django.utils import timezone
 
 from core.models import CurrentResult, Provider
 from core.services.device_redis_service import DeviceRedisService
+from core.services.results_refresh_service import ResultsRefreshService
 from core.services.result_window_service import (
     delete_future_rows_for_provider,
     get_business_cutoff_time,
@@ -35,14 +36,12 @@ LOTERIAS_URL = "https://lotoven.com/loterias/"
 TRIPLE_CHANCE_URL = "https://lotoven.com/loteria/triplechance/resultados/"
 TRIPLE_ZULIA_URL = "https://lotoven.com/loteria/triplezulia/resultados/"
 TRIPLE_CARACAS_URL = "https://lotoven.com/loteria/triplecaracas/resultados/"
-TRIPLE_TACHIRA_URL = "https://lotoven.com/loteria/tripletachira/resultados/"
 TRIPLE_CALIENTE_URL = "https://lotoven.com/loteria/triplecaliente/resultados/"
 TRIPLE_ZAMORANO_URL = "https://lotoven.com/loteria/triplezamorano/resultados/"
 
 EXPECTED_TRIPLE_ABC_TIMES = {
     "Triple Caracas": {(13, 0), (16, 30)},
     "Triple Caliente": {(13, 0), (16, 30), (19, 10)},
-    "Triple Tachira": {(13, 15), (16, 45)},
     "Triple Zamorano": {(10, 0), (12, 0), (14, 0)},
 }
 EXPECTED_TRIPLE_CHANCE_TIMES = {(13, 0), (16, 0), (19, 0)}
@@ -62,7 +61,6 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     ProviderSpec(name="Triple Facil", kind="table_simple", dom_id="triplefacil"),
     ProviderSpec(name="Triple Zulia", kind="triple_abc", dom_id="triplezulia", source_url=TRIPLE_ZULIA_URL),
     ProviderSpec(name="Triple Caracas", kind="triple_abc", dom_id="triplecaracas", source_url=TRIPLE_CARACAS_URL),
-    ProviderSpec(name="Triple Tachira", kind="triple_abc", dom_id="tripletachira", source_url=TRIPLE_TACHIRA_URL),
     ProviderSpec(name="Triple Caliente", kind="triple_abc", dom_id="triplecaliente", source_url=TRIPLE_CALIENTE_URL),
     ProviderSpec(name="Triple Zamorano", kind="triple_abc", dom_id="triplezamorano", source_url=TRIPLE_ZAMORANO_URL),
     # ProviderSpec(name="La Ricachona", kind="table_simple", dom_id="laricachona"),
@@ -143,8 +141,8 @@ def _iter_pairs(xs: list[str], ys: list[str]) -> Iterable[tuple[int, str, str]]:
         yield idx, xs[idx], ys[idx]
 
 
-def _save_result(*, provider: Provider, draw_date, draw_time: time, winning_number: str, extra: Optional[dict]) -> None:
-    CurrentResult.objects.update_or_create(
+def _save_result(*, provider: Provider, draw_date, draw_time: time, winning_number: str, extra: Optional[dict]):
+    return ResultsRefreshService.upsert_current_result(
         provider=provider,
         draw_date=draw_date,
         draw_time=draw_time,
@@ -356,6 +354,7 @@ class Command(BaseCommand):
         total_saved = 0
         total_with_signo = 0
         total_future_purged = 0
+        has_changes = False
 
         specs = PROVIDERS
         if only:
@@ -381,7 +380,7 @@ class Command(BaseCommand):
                     parsed = _filter_due_current_rows(_parse_table_simple(block), cutoff_time)
                     provider = _get_or_create_provider(spec.name, spec.source_url)
                     for t, winning_number, extra in parsed:
-                        _save_result(
+                        _, _, was_changed = _save_result(
                             provider=provider,
                             draw_date=draw_date,
                             draw_time=t,
@@ -389,12 +388,15 @@ class Command(BaseCommand):
                             extra=extra,
                         )
                         total_saved += 1
-                    total_future_purged += delete_future_rows_for_provider(
+                        has_changes = has_changes or was_changed
+                    purged = delete_future_rows_for_provider(
                         model=CurrentResult,
                         provider=provider,
                         draw_date=draw_date,
                         cutoff_time=cutoff_time,
                     )
+                    total_future_purged += purged
+                    has_changes = has_changes or bool(purged)
                 elif spec.kind == "triple_chance":
                     parsed = _filter_due_current_rows(
                         _filter_expected_triple_chance_times(_parse_triple_chance(block)),
@@ -406,7 +408,7 @@ class Command(BaseCommand):
                     }
                     for group, t, winning_number, extra in parsed:
                         provider = chance_providers[group]
-                        _save_result(
+                        _, _, was_changed = _save_result(
                             provider=provider,
                             draw_date=draw_date,
                             draw_time=t,
@@ -414,16 +416,19 @@ class Command(BaseCommand):
                             extra=extra,
                         )
                         total_saved += 1
+                        has_changes = has_changes or was_changed
                         if extra and extra.get("signo"):
                             total_with_signo += 1
                     for _, p in chance_providers.items():
                         _cleanup_unexpected_times(p, draw_date, EXPECTED_TRIPLE_CHANCE_TIMES)
-                        total_future_purged += delete_future_rows_for_provider(
+                        purged = delete_future_rows_for_provider(
                             model=CurrentResult,
                             provider=p,
                             draw_date=draw_date,
                             cutoff_time=cutoff_time,
                         )
+                        total_future_purged += purged
+                        has_changes = has_changes or bool(purged)
                 elif spec.kind == "triple_abc":
                     parsed = _filter_due_current_rows(
                         _filter_expected_triple_abc_times(spec.name, _parse_triple_abc(block)),
@@ -437,7 +442,7 @@ class Command(BaseCommand):
                     }
                     for group, t, winning_number, extra in parsed:
                         provider = abc_providers[group]
-                        _save_result(
+                        _, _, was_changed = _save_result(
                             provider=provider,
                             draw_date=draw_date,
                             draw_time=t,
@@ -445,17 +450,20 @@ class Command(BaseCommand):
                             extra=extra,
                         )
                         total_saved += 1
+                        has_changes = has_changes or was_changed
                         if extra and extra.get("signo"):
                             total_with_signo += 1
                     if expected_abc:
                         for _, p in abc_providers.items():
                             _cleanup_unexpected_times(p, draw_date, expected_abc)
-                            total_future_purged += delete_future_rows_for_provider(
+                            purged = delete_future_rows_for_provider(
                                 model=CurrentResult,
                                 provider=p,
                                 draw_date=draw_date,
                                 cutoff_time=cutoff_time,
                             )
+                            total_future_purged += purged
+                            has_changes = has_changes or bool(purged)
                 else:
                     parsed = []
 
@@ -478,6 +486,7 @@ class Command(BaseCommand):
         DeviceRedisService.delete_pattern("results:triples:*")
         DeviceRedisService.delete_pattern("results:current:*")
         DeviceRedisService.delete_cache("results:current:all")
+        ResultsRefreshService.schedule_refresh_results_now_on_commit(has_changes=has_changes)
 
         self.stdout.write(
             self.style.SUCCESS(
