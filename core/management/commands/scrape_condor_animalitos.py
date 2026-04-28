@@ -1,15 +1,16 @@
-# core/management/commands/scrape_lottoresultados_condorgana.py
-
 from __future__ import annotations
 
+import os
 import re
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from typing import Optional
 from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
 
+from django.core.cache import cache
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
@@ -24,17 +25,20 @@ from core.services.result_window_service import (
 
 
 SOURCE_URL = "https://resultados365.com/resultados/Condor%20Gana"
-SOURCE_RESULTS_API_TEMPLATE = (
-    "https://resultados365.com/api/v2/sorteos/resultados"
-    "?id_sorteo=1103&fecha={date}&tabla=true"
-)
-BASE_URL = "https://www.lottoresultados.com"
-CONDOR_IMAGE_URL_TEMPLATE = "/img/animalitos_webp_120x120/CondorGana/{number}.webp"
+BASE_URL = "https://resultados365.com"
+CONDOR_IMAGE_URL_TEMPLATE = "/CondorGana/{number}.webp"
 
-
-TIME_RE = re.compile(r"^\s*(\d{1,2}):(\d{2})\s*(am|pm)\s*$", re.IGNORECASE)
-LINE_RE = re.compile(r"^\s*(\d{1,2})\s+(.+?)\s*$")  # "62 Cachicamo"
+TIME_RE = re.compile(r"^\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*$", re.IGNORECASE)
+LINE_RE = re.compile(r"^\s*(\d{1,2})\s+(.+?)\s*$")
 PLACEHOLDER_VALUES = {"", "-", "pendiente", "proximo", "próximo"}
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
 
 def _normalize_space(value: str) -> str:
@@ -52,22 +56,21 @@ def _build_condor_image_url(number: str) -> str:
 
 
 def _parse_time_12h(text: str):
-    """
-    Convierte "9:00 am" -> time(9,0), "12:00 pm" -> time(12,0), "1:00 pm" -> time(13,0).
-    """
-    text = " ".join((text or "").split()).strip().lower()
-    m = TIME_RE.match(text)
-    if not m:
+    normalized = _normalize_space(text).lower()
+    match = TIME_RE.match(normalized)
+    if not match:
         return None
-    hh = int(m.group(1))
-    mm = int(m.group(2))
-    ap = m.group(3).lower()
 
-    if hh == 12:
-        hh = 0
-    if ap == "pm":
-        hh += 12
-    return datetime.strptime(f"{hh:02d}:{mm:02d}", "%H:%M").time()
+    hour = int(match.group(1))
+    minute = int(match.group(2) or "00")
+    meridiem = match.group(3).lower()
+
+    if hour == 12:
+        hour = 0
+    if meridiem == "pm":
+        hour += 12
+
+    return datetime.strptime(f"{hour:02d}:{minute:02d}", "%H:%M").time()
 
 
 def _get_or_create_provider() -> Provider:
@@ -75,17 +78,27 @@ def _get_or_create_provider() -> Provider:
         name="Condor Gana",
         defaults={"source_url": SOURCE_URL, "is_active": True},
     )
+    updates: list[str] = []
     if provider.source_url != SOURCE_URL:
         provider.source_url = SOURCE_URL
-        provider.save(update_fields=["source_url"])
+        updates.append("source_url")
     if provider.is_active is False:
         provider.is_active = True
-        provider.save(update_fields=["is_active"])
+        updates.append("is_active")
+    if updates:
+        provider.save(update_fields=updates)
     return provider
 
 
 class Command(BaseCommand):
     help = "Scrapea Condor Gana (animalitos) desde Resultados365 y guarda en AnimalitoResult."
+
+    HTML_CACHE_TTL_SECONDS = _int_env("CONDOR_ANIMALITOS_HTML_CACHE_TTL_SECONDS", 150)
+    GLOBAL_COOLDOWN_SECONDS = _int_env("CONDOR_ANIMALITOS_COOLDOWN_SECONDS", 150)
+    USER_AGENT = (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+    )
 
     def add_arguments(self, parser):
         parser.add_argument("--timeout", type=int, default=20)
@@ -93,31 +106,53 @@ class Command(BaseCommand):
             "--date",
             type=str,
             default=None,
-            help="YYYY-MM-DD. Solo soporta HOY o AYER (porque la página trae ambos bloques).",
+            help="YYYY-MM-DD. Solo soporta HOY o AYER.",
         )
-        parser.add_argument("--dry-run", action="store_true")
+        parser.add_argument("--dry-run", action="store_true", help="No guarda en BD.")
+        parser.add_argument("--force", action="store_true", help="Ignora cooldown y cache.")
+        parser.add_argument("--debug", action="store_true", help="Imprime métricas de parseo.")
 
     def handle(self, *args, **opts):
         timeout: int = opts["timeout"]
         dry_run: bool = bool(opts["dry_run"])
+        force: bool = bool(opts["force"])
+        debug: bool = bool(opts["debug"])
         target_date = self._parse_date(opts.get("date"))
 
         today = timezone.localdate()
-        yesterday = today - timezone.timedelta(days=1)
+        yesterday = today - timedelta(days=1)
 
         if target_date not in (today, yesterday):
             raise CommandError(
-                "Este scraper soporta solo HOY o AYER (la página expone ambos). "
+                "Este scraper soporta solo HOY o AYER. "
                 f"Hoy={today.isoformat()} Ayer={yesterday.isoformat()}."
             )
 
-        html = self._fetch_html(timeout=timeout)
-        rows = self._fetch_rows_from_resultados365(html=html, target_date=target_date, timeout=timeout)
+        if not force and self._is_in_global_cooldown(target_date):
+            secs = self._seconds_since_last_run(target_date)
+            self.stdout.write(
+                self.style.WARNING(
+                    f"Saltando Condor Gana: último scrape hace {secs}s "
+                    f"(< {self.GLOBAL_COOLDOWN_SECONDS}s)."
+                )
+            )
+            return
+
+        final_url = self._source_url_for_date(target_date)
+        html = self._fetch_html(target_date=target_date, timeout=timeout, force=force)
+        rows = self._parse_html(html, target_date=target_date, debug=debug)
+
+        if not rows:
+            raise CommandError(
+                f"No se detectaron resultados Condor Gana en HTML público para {target_date.isoformat()}"
+            )
 
         if dry_run:
             self.stdout.write(self.style.SUCCESS(f"DRY RUN: parsed={len(rows)}"))
-            for r in rows:
-                self.stdout.write(f"{r['time']} -> {r['number']} {r['animal']} ({r['image']})")
+            for row in rows:
+                self.stdout.write(
+                    f"{row['time']} -> {row['number']} {row['animal']} ({row['image']})"
+                )
             return
 
         provider = _get_or_create_provider()
@@ -135,15 +170,16 @@ class Command(BaseCommand):
         created = 0
         updated = 0
         has_changes = False
-        for r in rows:
+
+        for row in rows:
             _, was_created, was_changed = ResultsRefreshService.upsert_animalito_result(
                 provider=provider,
                 draw_date=target_date,
-                draw_time=r["draw_time_obj"],
+                draw_time=row["draw_time_obj"],
                 defaults={
-                    "animal_number": r["number"],
-                    "animal_name": r["animal"],
-                    "animal_image_url": r["image"],
+                    "animal_number": row["number"],
+                    "animal_name": row["animal"],
+                    "animal_image_url": row["image"],
                     "provider_logo_url": provider.logo_url or "",
                     "result_origin": AnimalitoResult.ResultOrigin.AUTOMATIC_VALID,
                     "source_incident": None,
@@ -155,104 +191,141 @@ class Command(BaseCommand):
                 updated += 1
             has_changes = has_changes or was_changed
 
+        self._set_last_run(target_date)
         DeviceRedisService.delete_pattern("results:animalitos:*")
         ResultsRefreshService.schedule_refresh_results_now_on_commit(
             has_changes=has_changes or bool(future_purged)
         )
 
-        self.stdout.write(self.style.SUCCESS(
-            f"OK Condor Gana (resultados365): date={target_date} parsed={len(rows)} created={created} updated={updated} future_purged={future_purged}"
-        ))
+        self.stdout.write(
+            self.style.SUCCESS(
+                "OK Condor Gana (html): "
+                f"url={final_url} date={target_date} parsed={len(rows)} "
+                f"created={created} updated={updated} future_purged={future_purged}"
+            )
+        )
 
-    def _fetch_html(self, timeout: int) -> str:
+    def _source_url_for_date(self, target_date) -> str:
+        return f"{SOURCE_URL}/{target_date.isoformat()}"
+
+    def _last_run_key(self, target_date) -> str:
+        return f"scrape:condor_animalitos:last_run:{target_date.isoformat()}"
+
+    def _set_last_run(self, target_date):
+        cache.set(self._last_run_key(target_date), timezone.now().timestamp(), timeout=24 * 3600)
+
+    def _seconds_since_last_run(self, target_date) -> int:
+        ts = cache.get(self._last_run_key(target_date))
+        if not ts:
+            return 10**9
+        return int(timezone.now().timestamp() - float(ts))
+
+    def _is_in_global_cooldown(self, target_date) -> bool:
+        return self._seconds_since_last_run(target_date) < self.GLOBAL_COOLDOWN_SECONDS
+
+    def _html_cache_key(self, target_date) -> str:
+        return f"scrape:condor_animalitos:html:{target_date.isoformat()}"
+
+    def _fetch_html(self, *, target_date, timeout: int, force: bool) -> str:
+        cache_key = self._html_cache_key(target_date)
+        if not force:
+            cached = cache.get(cache_key)
+            if cached:
+                return cached
+
+        time.sleep(0.8)
         resp = requests.get(
-            SOURCE_URL,
+            self._source_url_for_date(target_date),
             timeout=timeout,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-                )
-            },
+            headers={"User-Agent": self.USER_AGENT},
         )
         resp.raise_for_status()
-        return resp.text
 
-    def _fetch_rows_from_resultados365(self, *, html: str, target_date, timeout: int) -> list[dict]:
-        data_url = self._resolve_results_api_url(html=html, target_date=target_date)
-        response = requests.get(
-            data_url,
-            timeout=timeout,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+        html = resp.text
+        cache.set(cache_key, html, timeout=self.HTML_CACHE_TTL_SECONDS)
+        return html
+
+    def _parse_html(self, html: str, *, target_date, debug: bool) -> list[dict]:
+        soup = BeautifulSoup(html, "html.parser")
+        today = timezone.localdate()
+        daily_block = self._select_daily_block(soup, target_date=target_date, today=today)
+
+        rows_by_parser = {
+            "resultado_items": self._parse_resultado_items(soup),
+            "weekly_table": self._parse_weekly_table(soup, target_date=target_date),
+            "daily_block": self._parse_daily_block(soup, target_date=target_date, today=today),
+            "step_list": self._parse_step_list(daily_block) if daily_block else [],
+        }
+
+        selected_parser = ""
+        rows: list[dict] = []
+        for parser_name in ("resultado_items", "weekly_table", "daily_block", "step_list"):
+            parser_rows = rows_by_parser[parser_name]
+            if parser_rows:
+                selected_parser = parser_name
+                rows = parser_rows
+                break
+
+        if debug:
+            self.stdout.write(f"[debug] final_url={self._source_url_for_date(target_date)}")
+            self.stdout.write(
+                f"[debug] resultado_items_found={len(soup.select('div.resultado-item'))}"
+            )
+            self.stdout.write(f"[debug] tables_found={len(soup.select('table'))}")
+            self.stdout.write(
+                f"[debug] step_items_found={len(soup.select('ul.step li.step-item'))}"
+            )
+            for parser_name in ("resultado_items", "weekly_table", "daily_block", "step_list"):
+                self.stdout.write(
+                    f"[debug] parsed_{parser_name}={len(rows_by_parser[parser_name])}"
                 )
-            },
-        )
-        response.raise_for_status()
-        return self._parse_results365_table(response.text)
+            self.stdout.write(f"[debug] selected_parser={selected_parser or 'none'}")
+            for row in rows[:5]:
+                self.stdout.write(
+                    f"[debug] row {row['time']} -> {row['number']} {row['animal']}"
+                )
 
-    def _resolve_results_api_url(self, *, html: str, target_date) -> str:
-        soup = BeautifulSoup(html, "html.parser")
-        button = soup.select_one(".btn-copiar[data-url]")
-        if not button:
-            return SOURCE_RESULTS_API_TEMPLATE.format(date=target_date.isoformat())
+        return rows
 
-        data_url = _normalize_space(button.get("data-url") or "")
-        if not data_url:
-            return SOURCE_RESULTS_API_TEMPLATE.format(date=target_date.isoformat())
+    def _parse_resultado_items(self, soup) -> list[dict]:
+        out: list[dict] = []
 
-        data_url = re.sub(r"fecha=\d{4}-\d{2}-\d{2}", f"fecha={target_date.isoformat()}", data_url)
-        return urljoin(SOURCE_URL, data_url)
+        article = soup.select_one("article#article_CondorGana")
+        containers = article.select("div.resultado-item") if article else soup.select("div.resultado-item")
 
-    def _parse_results365_table(self, html: str) -> list[dict]:
-        soup = BeautifulSoup(html, "html.parser")
-        rows = []
-        for tr in soup.select("table tbody tr"):
-            cells = tr.find_all("td")
-            if len(cells) < 3:
-                continue
-
-            draw_label = _normalize_space(cells[0].get_text(" ", strip=True))
-            number = _normalize_space(cells[1].get_text(" ", strip=True))
-            animal = _normalize_space(cells[2].get_text(" ", strip=True))
+        for item in containers:
+            time_label = _normalize_space(
+                item.get("data-hora") or self._safe_text(item.select_one("p.text-gray-500"))
+            )
+            number = _normalize_space(item.get("data-ganador") or "")
+            animal = _normalize_space(item.get("data-descripcion") or "")
 
             if _is_placeholder_value(number) or _is_placeholder_value(animal):
                 continue
 
-            draw_time = self._parse_results365_time(draw_label)
+            draw_time = _parse_time_12h(time_label)
             if not draw_time:
                 continue
 
-            rows.append(
+            img = item.select_one("img")
+            image_url = self._extract_media_url(img) or _build_condor_image_url(number)
+
+            out.append(
                 {
-                    "time": draw_label,
+                    "time": time_label,
                     "draw_time_obj": draw_time,
-                    "number": number.zfill(2) if number.isdigit() else number,
+                    "number": number,
                     "animal": animal,
-                    "image": _build_condor_image_url(number),
+                    "image": image_url,
                 }
             )
-        return rows
 
-    def _parse_results365_time(self, value: str):
-        match = re.search(r"(\d{1,2})(?::(\d{2}))?\s*([AP]M)$", _normalize_space(value), re.IGNORECASE)
-        if not match:
-            return None
-        hour = int(match.group(1))
-        minute = int(match.group(2) or "00")
-        meridiem = match.group(3).lower()
-        if hour == 12:
-            hour = 0
-        if meridiem == "pm":
-            hour += 12
-        return datetime.strptime(f"{hour:02d}:{minute:02d}", "%H:%M").time()
+        return out
 
     def _parse_weekly_table(self, soup, *, target_date) -> list[dict]:
         target_label = target_date.strftime("%d/%m/%y")
 
-        for table in soup.select("table.table"):
+        for table in soup.select("table.table, table"):
             header_cells = table.select("thead tr th")
             if len(header_cells) < 2:
                 continue
@@ -298,14 +371,14 @@ class Command(BaseCommand):
                 number = match.group(1)
                 animal = match.group(2).strip()
                 img = cells[target_index].select_one("img")
-                src = (img.get("src") if img else "") or ""
+                image_url = self._extract_media_url(img) or _build_condor_image_url(number)
                 out.append(
                     {
                         "time": time_label,
                         "draw_time_obj": draw_time,
                         "number": number,
                         "animal": animal,
-                        "image": urljoin(BASE_URL, src) if src else _build_condor_image_url(number),
+                        "image": image_url,
                     }
                 )
 
@@ -314,64 +387,55 @@ class Command(BaseCommand):
 
         return []
 
-    def _parse_daily_block(self, soup, *, target_date, today) -> list[dict]:
+    def _select_daily_block(self, soup, *, target_date, today):
         if target_date == today:
             block = soup.select_one("#resultado-de-condor-gana-de-hoy")
-            return self._parse_step_list(block) if block else []
-
-        block = soup.select_one("#resultado-de-condor-gana-de-ayer")
-        if block:
-            return self._parse_step_list(block)
+            if block:
+                return block
+        else:
+            block = soup.select_one("#resultado-de-condor-gana-de-ayer")
+            if block:
+                return block
 
         cols = soup.select(".row > .col-sm-6")
+        if target_date == today and cols:
+            return cols[0]
         if len(cols) >= 2:
-            return self._parse_step_list(cols[1])
-        return []
+            return cols[1]
+        return None
+
+    def _parse_daily_block(self, soup, *, target_date, today) -> list[dict]:
+        block = self._select_daily_block(soup, target_date=target_date, today=today)
+        return self._parse_step_list(block) if block else []
 
     def _parse_step_list(self, container) -> list[dict]:
-        """
-        Formato observado:
-        - <ul class="step">
-            <li class="step-item">
-              <h4>9:00 am</h4>
-              <p class="step-text ...">62 Cachicamo</p>
-              <img src="/img/.../CondorGana/62.webp" alt="...">
-        La fila final puede ser "Próximo" y se ignora. :contentReference[oaicite:2]{index=2}
-        """
         out: list[dict] = []
         if not container:
             return out
 
         items = container.select("ul.step li.step-item")
-        for it in items:
-            time_txt = it.select_one("h4")
-            line_txt = it.select_one("p.step-text")
-            img = it.select_one("img")
+        for item in items:
+            time_label = self._safe_text(item.select_one("h4"))
+            line_value = self._safe_text(item.select_one("p.step-text"))
 
-            t_raw = time_txt.get_text(" ", strip=True) if time_txt else ""
-            line_raw = line_txt.get_text(" ", strip=True) if line_txt else ""
-
-            # Ignorar "Próximo" o vacíos
-            if _is_placeholder_value(line_raw):
+            if _is_placeholder_value(line_value):
                 continue
 
-            draw_time = _parse_time_12h(t_raw)
+            draw_time = _parse_time_12h(time_label)
             if not draw_time:
                 continue
 
-            m = LINE_RE.match(line_raw)
-            if not m:
+            match = LINE_RE.match(line_value)
+            if not match:
                 continue
 
-            number = m.group(1)  # "62" / "5"
-            animal = m.group(2).strip()  # "Cachicamo" / "León"
-
-            src = (img.get("src") if img else "") or ""
-            image_url = urljoin(BASE_URL, src) if src else _build_condor_image_url(number)
+            number = match.group(1)
+            animal = match.group(2).strip()
+            image_url = self._extract_media_url(item.select_one("img")) or _build_condor_image_url(number)
 
             out.append(
                 {
-                    "time": t_raw,
+                    "time": time_label,
                     "draw_time_obj": draw_time,
                     "number": number,
                     "animal": animal,
@@ -381,10 +445,42 @@ class Command(BaseCommand):
 
         return out
 
+    def _safe_text(self, el) -> str:
+        if not el:
+            return ""
+        return el.get_text(" ", strip=True)
+
+    def _extract_media_url(self, el) -> str:
+        if not el:
+            return ""
+
+        candidates = (
+            el.get("data-src"),
+            el.get("data-lazy-src"),
+            el.get("data-original"),
+            el.get("data-srcset"),
+            el.get("srcset"),
+            el.get("src"),
+        )
+
+        for raw_value in candidates:
+            value = str(raw_value or "").strip()
+            if not value:
+                continue
+            if "," in value:
+                value = value.split(",", 1)[0].strip()
+            if " " in value:
+                value = value.split(" ", 1)[0].strip()
+            if not value or value.startswith("data:"):
+                continue
+            return urljoin(BASE_URL, value)
+
+        return ""
+
     def _parse_date(self, raw: Optional[str]):
         if not raw:
             return timezone.localdate()
         try:
             return datetime.strptime(raw.strip(), "%Y-%m-%d").date()
-        except ValueError:
-            raise CommandError("Formato date inválido. Usa YYYY-MM-DD.")
+        except ValueError as exc:
+            raise CommandError("Formato date inválido. Usa YYYY-MM-DD.") from exc
